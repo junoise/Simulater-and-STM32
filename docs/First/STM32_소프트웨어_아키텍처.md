@@ -22,8 +22,6 @@
                          ↓                                              \      |       /
                      Data Manager                                         System Status
                          ↓
-                    System Monitor
-                         ↓
                    Mission Manager
                   ↙              ↘
          Waypoint Manager       Guidance
@@ -64,7 +62,7 @@
     Communication 모듈로 부터 전달받은 수신 데이터
   
   - 처리
-    수신 데이터 범위 및 형식 유효성 검사
+    수신 데이터의 유효 범위를 검사
     유효한 항공기 상태 데이터 저장
     
   - 출력
@@ -78,7 +76,7 @@
 ### 3.3 Mission Manager
 
   - 입력
-    System Monitor의 시스템 상태
+    없음
   
   - 처리
     현재 Mission State를 확인한다.
@@ -108,7 +106,8 @@
     최종 waypoint 도달 여부 판단
     
   - 출력
-    현재 목표 waypoint
+    현재 목표 waypoint index
+    현재 목표 waypoint (latitude,longitude,altitude)
     최종 waypoint 도달 여부
     
   - 내부 상태
@@ -120,6 +119,7 @@
    - 입력
     현재 목표 waypoint
     현재 기체 상태
+
     - 속도
     - 위도
     - 경도
@@ -141,9 +141,175 @@
     없음
     
 ### 3.6 System Monitor
-
+  - 입력
+    현재 연료량
+    Data Manger 의 데이터 상태
+    Communication의 통신 상태
+  
+  - 처리
+    현재 연료량을 기반으로 연료 상태를 판단한다.
+    각 모듈의 상태 정보를 기반으로 전체 시스템 상태를 판단한다.
+    
+  - 출력
+    fuel status
+    System status
+  - 내부 상태    
+    -Fuel status
+    -Data status
+    -Communication status
+    -System status
+    
 ### 3.7 OutputData Manager
-
+  - 입력
+    - Guidance의 target_altitude
+    - Guidance의 target_heading
+    - Guidance의 target_speed
+    - Waypoint Manager의 current_waypoint_latitude
+    - Waypoint Manager의 current_waypoint_longitude
+    - Waypoint Manager의 current_waypoint_altitude
+    - Waypoint Manager의 current_waypoint_index
+    - Mission Manager의 mission_state
+    - Data Manager의 data_status
+    - System Monitor의 fuel_status
+  
+  - 처리
+    각 모듈에서 전달받은 출력 데이터를 저장한다.
+    Communication 모듈이 송신할 수 있도록 출력 데이터를 구성한다.
+    
+  - 출력
+    Unity Simulator로 송신할 Output Data
+    
+  - 내부 상태
+    - target_altitude
+    - target_heading
+    - target_speed
+    - current_waypoint_latitude
+    - current_waypoint_longitude
+    - current_waypoint_altitude
+    - current_waypoint_index
+    - mission_state
+    - data_status
+    - fuel_status
+    
 ## 4. 데이터 흐름
+  ### 데이터의 흐름
+  Unity Simulator -> Communication -> 수신 패킷 파싱 -> Data Manager -> 데이터 유효성 검사 -> System Monitor
+  -> 시스템 상태 확인 -> Mission Manager -> WayPointManager -> 현재 목표 Waypoint 갱신 -> Guidance ->
+  목표 Heading / Altitude / Speed 계산 -> Output Data Manager -> 송신 데이터 구성 -> Communication -> Unity Simulator 
+  ### 오류 흐름
+  Communication Error -> 해당 주기 처리 중단
+  Data Error -> 해당 주기 처리 중단
+  System Error -> Mission Manager 실행안함 및 주기 처리 중단.
 
 ## 5. FreeRTOS Task 아키텍처
+
+STM32 소프트웨어는 각 기능의 실행 주기와 실시간성을 분리하기 위해
+FreeRTOS 기반의 Task 구조로 구성한다.
+
+각 Task는 독립적인 실행 주기와 우선순위를 가지며,
+Task 간 데이터는 Queue 또는 공유 데이터 구조를 통해 전달한다.
+
+### 5.1 Comm RX Task
+
+- 역할
+  - Unity Simulator로부터 데이터 수신
+  - 수신 패킷 파싱
+  - Data Manager를 통한 데이터 유효성 검사
+  - 유효한 최신 Aircraft State 갱신
+
+- 실행 주기
+  - TBD
+
+- 우선순위
+  - High 후보
+
+- 설계 근거
+  - Mission Task가 최신 기체 상태를 기반으로 Guidance를 계산할 수 있도록
+    수신 지연을 최소화할 필요가 있다.
+  - 오래된 Aircraft State가 누적되지 않도록 최신 데이터 우선 정책을 적용한다.
+
+### 5.2 Mission Task
+
+- 역할
+  - Mission Manager 실행
+  - Waypoint Manager 실행
+  - 현재 목표 Waypoint 갱신
+  - Guidance 계산
+  - Output Data Manager 갱신
+
+- 실행 주기
+  - TBD
+
+- 우선순위
+  - Medium 후보
+
+- 설계 근거
+  - Guidance 계산은 일정 주기로 수행되어야 한다.
+  - 단, 최신 Aircraft State 확보가 선행되어야 하므로 Comm RX Task보다
+    낮은 우선순위를 가진다.
+
+### 5.3 Comm TX Task
+
+- 역할
+  - Output Data Manager에서 송신 데이터를 획득
+  - Communication 모듈의 송신 기능을 이용하여 Unity Simulator로 데이터 송신
+
+- 실행 주기
+  - TBD
+
+- 우선순위
+  - Medium  후보
+
+- 설계 근거
+  - Guidance 결과와 상태 정보는 주기적으로 Unity Simulator에 전달되어야 한다.
+  - 수신 및 Mission 처리보다 높은 우선순위를 요구하지 않는다.
+
+### 5.4 Monitor Task
+
+- 역할
+  - 현재 연료량 확인
+  - Fuel Status 판단
+  - Data Status 및 Communication Status 확인
+  - 시스템 이상 상태 감시
+
+- 실행 주기
+  - TBD
+
+- 우선순위
+  - Low 후보
+
+- 설계 근거
+  - 연료 상태 및 시스템 상태는 Comm RX와 Guidance 계산보다
+    높은 주기의 실시간 처리가 필요하지 않는다.
+
+### 5.5 Task 간 데이터 전달
+
+- Comm RX Task → Mission Task
+  - 검증된 최신 Aircraft State 전달
+  - Aircraft State는 최신 데이터 우선 정책을 적용한다.
+
+- Mission Task → Comm TX Task
+  - Output Data 전달
+  - target_heading
+  - target_altitude
+  - target_speed
+  - current_waypoint 정보
+  - mission_state
+  - data_status
+  - fuel_status
+
+- Monitor Task
+  - Fuel Status 및 시스템 상태 정보를 갱신한다.
+
+### 5.6 Task 우선순위 및 주기
+
+Task의 최종 실행 주기와 우선순위는 구현 및 시험 과정에서 측정한
+처리 시간과 요구 실시간성을 기반으로 결정한다.
+
+| Task | 주기 | 우선순위 |
+|---|---|---|
+| Comm RX Task | TBD | High 후보 |
+| Mission Task | TBD | Medium 후보 |
+| Comm TX Task | TBD | Medium 후보 |
+| Monitor Task | TBD | Low 후보 |
+
