@@ -80,7 +80,7 @@
   
   - 처리
     현재 Mission State를 확인한다.
-    시스템 상태가 정상인 경우 현재 Mission State에 따라 필요한 모듈을 호출한다.
+    현재 Mission State에 따라 필요한 모듈을 호출한다.
     INITIALIZE 완료 시 NAVIGATE로 전이한다.
     최종 Waypoint 도달 시 MISSION_COMPLETE로 전이한다.
     
@@ -149,10 +149,11 @@
   - 처리
     현재 연료량을 기반으로 연료 상태를 판단한다.
     각 모듈의 상태 정보를 기반으로 전체 시스템 상태를 판단한다.
+    Communication status 와 System status는 stm32 내부 판단용 변수이다.
     
   - 출력
     fuel status
-    System status
+    data status
   - 내부 상태    
     -Fuel status
     -Data status
@@ -283,7 +284,7 @@ Task 간 데이터는 Queue 또는 공유 데이터 구조를 통해 전달한�
   - 연료 상태 및 시스템 상태는 Comm RX와 Guidance 계산보다
     높은 주기의 실시간 처리가 필요하지 않는다.
 
-### 5.5 Task 간 데이터 전달
+### 5.5 Task 간 데이터 흐름 개요
 
 - Comm RX Task → Mission Task
   - 검증된 최신 Aircraft State 전달
@@ -316,7 +317,7 @@ Task의 최종 실행 주기와 우선순위는 구현 및 시험 과정에서 �
 
 task 우선순위는 초기 설계값이며, 구현 후 각 task의 실행시간과 주기 충족 여부를 측정하여 최종 확정한다.
 
-### 5.7 Task간 데이터 전달 방식
+### 5.7 Task간 데이터 전달 정책 상세
 - Comm RX Task → Mission Task
   - 검증된 Aircraft State를 전달한다.
   - Aircraft State는 최신 데이터가 중요하므로 길이 1의 Queue를 사용한다.
