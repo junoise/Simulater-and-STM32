@@ -107,8 +107,9 @@
     
   - 출력
     현재 목표 waypoint index
-    현재 목표 waypoint (latitude,longitude,altitude)
+    목표 waypoint list
     최종 waypoint 도달 여부
+     waypoint_list_updated
     
   - 내부 상태
     waypoint 목록
@@ -153,10 +154,9 @@
     
   - 출력
     fuel status
-    data status
+    
   - 내부 상태    
     -Fuel status
-    -Data status
     -Communication status
     -System status
     
@@ -165,9 +165,7 @@
     - Guidance의 target_altitude
     - Guidance의 target_heading
     - Guidance의 target_speed
-    - Waypoint Manager의 current_waypoint_latitude
-    - Waypoint Manager의 current_waypoint_longitude
-    - Waypoint Manager의 current_waypoint_altitude
+    - Waypoint Manager의 waypoint_list
     - Waypoint Manager의 current_waypoint_index
     - Mission Manager의 mission_state
     - Data Manager의 data_status
@@ -175,33 +173,44 @@
   
   - 처리
     각 모듈에서 전달받은 출력 데이터를 저장한다.
+    주기 송신 데이터와 변경 시 송신 데이터를 구분하여 관리한다.
+    Waypoint List 생성 또는 변경 시 Waypoint List 변경 상태를 기록한다.
     Communication 모듈이 송신할 수 있도록 출력 데이터를 구성한다.
     
   - 출력
-    Unity Simulator로 송신할 Output Data
+    주기 송신 Output Data
+    Waypoint List 변경 데이터
     
   - 내부 상태
     - target_altitude
     - target_heading
     - target_speed
-    - current_waypoint_latitude
-    - current_waypoint_longitude
-    - current_waypoint_altitude
+    - waypoint_list
     - current_waypoint_index
     - mission_state
     - data_status
     - fuel_status
+    - waypoint_list_updated
     
 ## 4. 데이터 흐름
+
   ### 데이터의 흐름
-  Unity Simulator -> Communication -> 수신 패킷 파싱 -> Data Manager -> 데이터 유효성 검사 -> System Monitor
-  -> 시스템 상태 확인 -> Mission Manager -> WayPointManager -> 현재 목표 Waypoint 갱신 -> Guidance ->
-  목표 Heading / Altitude / Speed 계산 -> Output Data Manager -> 송신 데이터 구성 -> Communication -> Unity Simulator 
-  ### 오류 흐름
-  Communication Error -> 해당 주기 처리 중단
-  Data Error -> 해당 주기 처리 중단
-  System Error (data Error) -> mission 해당 주기 처리 중단 ->unity에 전달 
-               (fuel low) -> mission 해당 주기 처리(2차 구현시:긴급임무 구현) 
+  Unity Simulator
+→ Comm RX Task
+→ Communication
+→ 패킷 파싱
+→ Data Manager
+→ 데이터 유효성 검사
+→ Aircraft State Queue
+→ Mission Task
+→ Mission Manager
+→ Waypoint Manager
+→ Guidance
+→ Output Data Manager
+→ Comm TX Task
+→ Communication
+→ Unity Simulator 
+  
 
 ## 5. FreeRTOS Task 아키텍처
 
@@ -243,7 +252,7 @@ Task 간 데이터는 Queue 또는 공유 데이터 구조를 통해 전달한�
   - TBD
 
 - 우선순위
-  - Medium 후보
+  - Medium - High 후보
 
 - 설계 근거
   - Guidance 계산은 일정 주기로 수행되어야 한다.
@@ -295,11 +304,14 @@ Task 간 데이터는 Queue 또는 공유 데이터 구조를 통해 전달한�
   - target_heading
   - target_altitude
   - target_speed
-  - current_waypoint 정보
+  - current_waypoint_index
   - mission_state
-  - data_status
-  - fuel_status
-
+  
+- Comm TX Task
+  - Data Manager에서 최신 data_status를 조회한다.
+  - System Monitor에서 최신 fuel_status를 조회한다.
+  - Mission Task에서 전달된 최신 Output Data와 상태값을 조합하여 Unity Simulator로 송신한다.
+  
 - Monitor Task
   - Fuel Status 및 시스템 상태 정보를 갱신한다.
 
@@ -335,13 +347,18 @@ task 우선순위는 초기 설계값이며, 구현 후 각 task의 실행시간
   - 새로운 Output Data가 생성되지 않은 경우 마지막으로 생성된 Output Data를 반복 송신한다.
 
 - Monitor Task → Comm TX Task
-  - 최신 시스템 상태 정보를 전달한다.
-  - 전달 대상에는 Data Status, Fuel Status 등이 포함된다.
-  - 각 상태 정보는 가장 최근의 상태값 유지가 중요하므로 최신값 우선 정책을 적용한다.
-  - 새로운 상태가 생성되면 기존 상태값을 갱신한다.
-  - Comm TX Task는 가장 최근의 상태 정보를 읽어 Output Data에 반영한다.
-  - 데이터를 읽어도 상태값이 유지되는 비소비 방식(Peek)을 적용한다.
-  - 각 상태의 초기값은 UNKNOWN 또는 초기 상태값으로 설정한다.
+  - 최신 Fuel Status를 관리한다.
+  - Fuel Status는 가장 최근의 상태값 유지가 중요하므로 최신값 우선 정책을 적용한다.
+  - 새로운 Fuel Status가 생성되면 기존 상태값을 갱신한다.
+  - Comm TX Task는 System Monitor에서 가장 최근의 Fuel Status를 조회하여 Output Data에 반영한다.
+  - 초기 Fuel Status는 UNKNOWN으로 설정한다.
+
+- Waypoint List 변경 데이터
+  - Waypoint List는 초기 생성 또는 변경 시에만 전송한다.
+  - OutputData Manager는 Waypoint List 변경 여부를 waypoint_list_updated 상태로 관리한다.
+  - Comm TX Task는 waypoint_list_updated가 TRUE인 경우 Waypoint List를 송신한다.
+  - 송신 완료 후 waypoint_list_updated를 FALSE로 갱신한다.
+  - current_waypoint_index는 주기 송신 데이터에 포함한다.
 
   ### 오류 흐름
   - Communication Error
@@ -358,3 +375,8 @@ task 우선순위는 초기 설계값이며, 구현 후 각 task의 실행시간
   - 1차 구현에서는 Mission Task의 정상 임무 흐름을 유지하고 Fuel Status만 Unity Simulator로 송신한다.
   - 2차 구현에서는 Fuel Low 상황에 대응하는 긴급 임무 로직을 수행한다.
   - Comm TX Task는 최신 Output Data와 Fuel Status를 Unity Simulator로 송신한다.
+___________________________________________________________________________________ 
+주기 패킷: target_*, current_waypoint_index, mission_state, data_status, fuel_status
+이벤트 패킷: waypoint_list
+waypoint_list_updated == TRUE일 때만 이벤트 패킷 송신
+Unity는 Packet Type 보고 두 형식을 구분
