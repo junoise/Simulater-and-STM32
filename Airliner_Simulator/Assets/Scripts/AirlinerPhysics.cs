@@ -5,6 +5,9 @@ public class AirlinerPhysics : MonoBehaviour
 {
     private Rigidbody rb;
 
+    [Header("Systems")]
+    public FuelSystem fuelSystem;
+
     [Header("Engine & Thrust")]
     public float maxThrust = 500000f;
     [Range(0, 1)] public float throttle = 0f;
@@ -22,12 +25,17 @@ public class AirlinerPhysics : MonoBehaviour
     public WheelCollider noseWheel;
     public WheelCollider leftWheel;
     public WheelCollider rightWheel;
-    public float steerAngle = 30f; 
+    public float steerAngle = 30f;
     public float brakeForce = 200000f;
 
     void Start()
     {
         rb = GetComponent<Rigidbody>();
+
+        if (fuelSystem == null)
+        {
+            fuelSystem = GetComponent<FuelSystem>();
+        }
     }
 
     void FixedUpdate()
@@ -40,7 +48,14 @@ public class AirlinerPhysics : MonoBehaviour
 
     private void ApplyThrust()
     {
-        Vector3 thrustForce = transform.forward * (maxThrust * throttle);
+        float currentThrust = maxThrust * throttle;
+
+        if (fuelSystem != null && fuelSystem.isEngineStarved)
+        {
+            currentThrust = 0f;
+        }
+
+        Vector3 thrustForce = transform.forward * currentThrust;
         rb.AddForce(thrustForce);
     }
 
@@ -54,7 +69,7 @@ public class AirlinerPhysics : MonoBehaviour
             Vector3 velocityDir = rb.linearVelocity.normalized;
 
             float aoa = Vector3.SignedAngle(transform.forward, velocityDir, transform.right);
-            
+
             if (aoa > 180f) aoa -= 360f;
 
             if (aoa > -1f && aoa < 1f) aoa = 0f;

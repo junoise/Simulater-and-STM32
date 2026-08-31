@@ -47,8 +47,8 @@ public class FlightTelemetryUI : MonoBehaviour
                            $"* Heading: {heading:F0}°\n" +
                            $"* Throttle: {currentThrottle:F0}%\n" +
                            $"----------------------------------\n" +
-                           $"* Lat (위도): {latitude:F6}°\n" +
-                           $"* Lon (경도): {longitude:F6}°";
+                           $"* Lat : {latitude:F6}°\n" +
+                           $"* Lon : {longitude:F6}°";
 
         telemetryText.text = telemetry;
     }
