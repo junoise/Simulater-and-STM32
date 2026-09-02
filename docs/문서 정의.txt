@@ -1,0 +1,6 @@
+Project_Overview.md 					프로젝트 개요			프로젝트 목적, 개발 범위, STM32와 Unity의 역할을 설명
+Requirements_Step.md					작성 절차/작업 가이드		요구사항을 어떤 순서와 기준으로 작성할지 정리한 참고 문서
+Project_Requirements_Candidate.md		요구사항 정의			프로젝트가 수행해야 할 기능의 후보 요구사항 정리
+First/1차구현_임무흐름 및 상태 전이표.md	동작 설계				1차 구현의 전체 임무 흐름과 상태 전이 조건 정의
+First/인터페이스_데이터정의서_초안.md		인터페이스 정의			Unity와 STM32가 주고받을 데이터의 이름·자료형·범위·주기 정의
+First/STM32_소프트웨어_아키텍처.md		아키텍처 설계			STM32 내부 모듈, FreeRTOS Task, Queue 및 데이터 흐름 정의
