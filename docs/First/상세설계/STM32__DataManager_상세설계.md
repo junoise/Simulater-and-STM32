@@ -128,6 +128,30 @@
     - 필수 데이터인 Aircraft State가 유효하지 않은 경우 MissionInput_t를 생성하지 않고 INPUT_FAIL을 반환한다.
     - RX Queue 전달에 실패한 경우 INPUT_FAIL을 반환한다.
     - Destination 또는 Mission Command가 존재하지 않는 것은 오류로 판단하지 않는다.
+
+
+
+#### 3.6  GetDataStatus
+
+- 목적 : Data Manager가 관리 중인 최신 Data Status를 외부 모듈에 제공한다.
+
+- 호출 Task : Mission Task 또는 OutputData Manager가 실행되는 Task
+
+- 입력 :없음
+
+- 출력 : 없음
+
+- 반환값 :
+    - DataStatus_t
+        - DATA_UNKNOWN
+        - DATA_VALID
+        - DATA_INVALID
+
+- 처리 절차 :
+    1. 내부에 저장된 최신 Data Status를 확인한다.
+    2. 현재 Data Status를 반환한다.
+
+- 오류 처리 :없음
 ---
 
 ### 4. 데이터 처리 흐름
