@@ -1,118 +1,13 @@
-## 구조체 정의
 
-### RxMessage_t
-typedef struct
-{
+#ifndef APP_TYPES_H
+#define APP_TYPES_H
 
-    AircraftState_t aircraft_state;
-    Destination_t destination;
-    bool destination_valid;
-    uint8_t mission_start_command;
-    bool mission_command_valid;
+#define MAX_WAYPOINT_COUNT 10U
 
-} RxMessage_t;
+#include <stdint.h>
+#include <stdbool.h>
 
-### TxMessage_t
-typedef struct
-{
-
-    OutputData_t output_data;
-    WaypointList_t waypoint_list;
-    bool waypoint_list_valid;
-
-} TxMessage_t;
-
-### AircraftState_t
-typedef struct
-{
-
-    float current_latitude;
-    float current_longitude;
-    float current_altitude;
-    float current_heading;
-    float current_speed;
-    float current_fuel;
-
-} AircraftState_t;
-
-### Destination_t
-typedef struct
-{
-
-    float destination_latitude;
-    float destination_longitude;
-    float destination_altitude;
-
-} Destination_t;
-
-
-
-### MissionInput_t
-typedef struct
-{
-
-    AircraftState_t aircraft_state;
-    Destination_t destination;
-    bool destination_valid;
-    uint8_t mission_start_command;
-    bool mission_command_valid;
-
-} MissionInput_t;
-
-### Waypoint_t
-typedef struct
-{
-
-    float latitude;
-    float longtitude;
-    float altitude;
-
-} Waypoint_t;
-
-### WaypointList_t
-typedef struct
-{
-
-    Waypoint_t waypoint[MAX_WAYPOINT_COUNT];
-    uint8_t waypoint_count;
-
-} WaypointList_t;
-
-### TargetCommand_t
-typedef struct
-{
-
-    float target_heading;
-    float target_altitude;
-    float target_speed;
-
-} TargetCommand_t;
-
-### SystemStatus_t
-typedef struct
-{
-    CommunicationStatus_t communication_status;
-    FuelStatus_t fuel_status;
-} SystemStatus_t;
-
-### OutputData_t
-typedef struct
-{
-    
-    float target_altitude;
-    float target_heading;
-    float target_speed;
-    uint8_t current_waypoint_index;
-    MissionState_t mission_state;
-    DataStatus_t data_status;
-
-} OutputData_t;
-
-## enum 정의
-
-----
-### Communication
-----
+//Communication
 typedef enum
 {
     RX_SUCCESS = 0,
@@ -143,10 +38,7 @@ typedef enum
     COMM_ERROR
 } CommunicationStatus_t;
 
-
-----
-### Data Manager
-----
+//Data Manager
 typedef enum
 {
     AIRCRAFT_SUCCESS = 0,
@@ -179,15 +71,14 @@ typedef enum
 
 typedef enum
 {
-    DATA_UNKNOWN = 0,
-    DATA_VALID,
-    DATA_INVALID
+	DATA_VALID   = 0,
+	DATA_INVALID = 1,
+	DATA_UNKNOWN = 2
+
 } DataStatus_t;
 
+//System Monitor
 
-----
-### System Monitor
-----
 typedef enum
 {
     FUEL_NORMAL = 0,
@@ -200,10 +91,8 @@ typedef enum
     COMM_STATUS_UPDATE_FAIL
 } CommStatusUpdateResult_t;
 
+//Waypoint Manager
 
-----
-### Waypoint Manager
-----
 typedef enum
 {
     WAYPOINT_GENERATE_SUCCESS = 0,
@@ -217,25 +106,22 @@ typedef enum
     WAYPOINT_CHECK_FAIL
 } WaypointProgressResult_t;
 
+//Guidance
 
-----
-### Guidance
-----
 typedef enum
 {
     GUIDANCE_CALCULATE_SUCCESS = 0,
     GUIDANCE_CALCULATE_FAIL
 } GuidanceResult_t;
 
+//Mission Manager
 
-----
-### Mission Manager
-----
 typedef enum
 {
-    INITIALIZE = 0,
-    NAVIGATE,
-    MISSION_COMPLETE
+	MISSION_STATE_INITIALIZE = 0,
+	MISSION_STATE_NAVIGATE   = 1,
+	MISSION_STATE_COMPLETE   = 2
+
 } MissionState_t;
 
 typedef enum
@@ -263,10 +149,8 @@ typedef enum
     MISSION_COMPLETE_SUCCESS = 0
 } MissionCompleteResult_t;
 
+//OutputData Manager
 
-----
-### OutputData Manager
-----
 typedef enum
 {
     OUTPUT_UPDATE_SUCCESS = 0,
@@ -285,7 +169,94 @@ typedef enum
     TX_MESSAGE_FAIL
 } TxMessageResult_t;
 
+//구조체
+
+typedef struct
+{
+	float current_latitude;
+	float current_longitude;
+	float current_altitude;
+	float current_heading;
+	float current_speed;
+	float current_fuel;
+
+}AircraftState_t;
+
+typedef struct
+{
+	float destination_latitude;
+	float destination_longitude;
+	float destination_altitude;
+
+}Destination_t;
+
+typedef struct
+{
+	float latitude;
+	float longitude;
+	float altitude;
+
+}Waypoint_t;
+
+typedef struct
+{
+	Waypoint_t waypoint[MAX_WAYPOINT_COUNT];
+	uint8_t waypoint_count;
+
+}WaypointList_t;
+
+typedef struct
+{
+	float target_heading;
+	float target_altitude;
+	float target_speed;
+
+}TargetCommand_t;
+
+typedef struct
+{
+	AircraftState_t aircraft_state;
+	Destination_t destination;
+	bool destination_valid;
+	uint8_t mission_start_command;
+	bool mission_command_valid;
+
+}MissionInput_t;
+
+typedef struct
+{
+	CommunicationStatus_t communication_status;
+	FuelStatus_t fuel_status;
+
+}SystemStatus_t;
+
+typedef struct
+{
+	float target_altitude;
+	float target_heading;
+	float target_speed;
+	uint8_t current_waypoint_index;
+	MissionState_t mission_state;
+	DataStatus_t data_status;
+}OutputData_t;
+
+typedef struct
+{
+	AircraftState_t aircraft_state;
+	Destination_t destination;
+	bool destination_valid;
+	uint8_t mission_start_command;
+	bool mission_command_valid;
+
+}RxMessage_t;
+
+typedef struct
+{
+	OutputData_t output_data;
+	WaypointList_t waypoint_list;
+	bool waypoint_list_valid;
+
+}TxMessage_t;
 
 
-
-
+#endif

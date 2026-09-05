@@ -18,7 +18,8 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
-
+#include "cmsis_os.h"
+#include "app_types.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 
@@ -42,6 +43,49 @@
 /* Private variables ---------------------------------------------------------*/
 UART_HandleTypeDef huart2;
 
+/* Definitions for CommRxTask */
+osThreadId_t CommRxTaskHandle;
+const osThreadAttr_t CommRxTask_attributes = {
+  .name = "CommRxTask",
+  .stack_size = 128 * 4,
+  .priority = (osPriority_t) osPriorityHigh,
+};
+/* Definitions for MissionTask */
+osThreadId_t MissionTaskHandle;
+const osThreadAttr_t MissionTask_attributes = {
+  .name = "MissionTask",
+  .stack_size = 128 * 4,
+  .priority = (osPriority_t) osPriorityHigh,
+};
+/* Definitions for CommTxTask */
+osThreadId_t CommTxTaskHandle;
+const osThreadAttr_t CommTxTask_attributes = {
+  .name = "CommTxTask",
+  .stack_size = 128 * 4,
+  .priority = (osPriority_t) osPriorityNormal,
+};
+/* Definitions for MonitorTask */
+osThreadId_t MonitorTaskHandle;
+const osThreadAttr_t MonitorTask_attributes = {
+  .name = "MonitorTask",
+  .stack_size = 128 * 4,
+  .priority = (osPriority_t) osPriorityLow,
+};
+/* Definitions for RxQueue */
+osMessageQueueId_t RxQueueHandle;
+const osMessageQueueAttr_t RxQueue_attributes = {
+  .name = "RxQueue"
+};
+/* Definitions for TxQueue */
+osMessageQueueId_t TxQueueHandle;
+const osMessageQueueAttr_t TxQueue_attributes = {
+  .name = "TxQueue"
+};
+/* Definitions for SystemStatusQueue */
+osMessageQueueId_t SystemStatusQueueHandle;
+const osMessageQueueAttr_t SystemStatusQueue_attributes = {
+  .name = "SystemStatusQueue"
+};
 /* USER CODE BEGIN PV */
 
 /* USER CODE END PV */
@@ -50,6 +94,11 @@ UART_HandleTypeDef huart2;
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_USART2_UART_Init(void);
+void StartCommRxTask(void *argument);
+void StartMissionTask(void *argument);
+void StartCommTxTask(void *argument);
+void StartMonitorTask(void *argument);
+
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -93,13 +142,67 @@ int main(void)
 
   /* USER CODE END 2 */
 
+  /* Init scheduler */
+  osKernelInitialize();
+
+  /* USER CODE BEGIN RTOS_MUTEX */
+  /* add mutexes, ... */
+  /* USER CODE END RTOS_MUTEX */
+
+  /* USER CODE BEGIN RTOS_SEMAPHORES */
+  /* add semaphores, ... */
+  /* USER CODE END RTOS_SEMAPHORES */
+
+  /* USER CODE BEGIN RTOS_TIMERS */
+  /* start timers, add new ones, ... */
+  /* USER CODE END RTOS_TIMERS */
+
+  /* Create the queue(s) */
+  /* creation of RxQueue */
+  RxQueueHandle = osMessageQueueNew (1, sizeof(MissionInput_t), &RxQueue_attributes);
+
+  /* creation of TxQueue */
+  TxQueueHandle = osMessageQueueNew (1, sizeof(TxMessage_t), &TxQueue_attributes);
+
+  /* creation of SystemStatusQueue */
+  SystemStatusQueueHandle = osMessageQueueNew (1, sizeof(SystemStatus_t), &SystemStatusQueue_attributes);
+
+  /* USER CODE BEGIN RTOS_QUEUES */
+  /* add queues, ... */
+  /* USER CODE END RTOS_QUEUES */
+
+  /* Create the thread(s) */
+  /* creation of CommRxTask */
+  CommRxTaskHandle = osThreadNew(StartCommRxTask, NULL, &CommRxTask_attributes);
+
+  /* creation of MissionTask */
+  MissionTaskHandle = osThreadNew(StartMissionTask, NULL, &MissionTask_attributes);
+
+  /* creation of CommTxTask */
+  CommTxTaskHandle = osThreadNew(StartCommTxTask, NULL, &CommTxTask_attributes);
+
+  /* creation of MonitorTask */
+  MonitorTaskHandle = osThreadNew(StartMonitorTask, NULL, &MonitorTask_attributes);
+
+  /* USER CODE BEGIN RTOS_THREADS */
+  /* add threads, ... */
+  /* USER CODE END RTOS_THREADS */
+
+  /* USER CODE BEGIN RTOS_EVENTS */
+  /* add events, ... */
+  /* USER CODE END RTOS_EVENTS */
+
+  /* Start scheduler */
+  osKernelStart();
+
+  /* We should never get here as control is now taken by the scheduler */
+
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
     /* USER CODE END WHILE */
-	  HAL_GPIO_TogglePin(GPIOA,GPIO_PIN_5);
-	  HAL_Delay(500);
+
     /* USER CODE BEGIN 3 */
   }
   /* USER CODE END 3 */
@@ -227,6 +330,146 @@ static void MX_GPIO_Init(void)
 /* USER CODE BEGIN 4 */
 
 /* USER CODE END 4 */
+
+/* USER CODE BEGIN Header_StartCommRxTask */
+/**
+  * @brief  Function implementing the CommRxTask thread.
+  * @param  argument: Not used
+  * @retval None
+  */
+/* USER CODE END Header_StartCommRxTask */
+void StartCommRxTask(void *argument)
+{
+  /* USER CODE BEGIN 5 */
+  /* Infinite loop */
+
+		MissionInput_t mission_input = {0};
+
+	    mission_input.aircraft_state.current_latitude  = 35.0f;
+	    mission_input.aircraft_state.current_longitude = 128.0f;
+	    mission_input.aircraft_state.current_altitude  = 1000.0f;
+	    mission_input.aircraft_state.current_heading   = 90.0f;
+	    mission_input.aircraft_state.current_speed     = 200.0f;
+	    mission_input.aircraft_state.current_fuel      = 80.0f;
+
+	    mission_input.destination.destination_latitude  = 36.0f;
+	    mission_input.destination.destination_longitude = 129.0f;
+	    mission_input.destination.destination_altitude  = 1200.0f;
+
+	    mission_input.destination_valid      = true;
+	    mission_input.mission_start_command  = 1U;
+	    mission_input.mission_command_valid  = true;
+  for(;;)
+  {
+		osMessageQueuePut(RxQueueHandle, &mission_input, 0U, 0U);
+		osDelay(100U);
+  }
+  /* USER CODE END 5 */
+}
+
+/* USER CODE BEGIN Header_StartMissionTask */
+/**
+* @brief Function implementing the MissionTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartMissionTask */
+void StartMissionTask(void *argument)
+{
+  /* USER CODE BEGIN StartMissionTask */
+  /* Infinite loop */
+
+	MissionInput_t mission_input = {0};
+	TxMessage_t tx_message = {0};
+  for(;;)
+  {
+	  if(osMessageQueueGet(RxQueueHandle,&mission_input,NULL,osWaitForever) == osOK){
+		  tx_message.output_data.target_altitude = mission_input.aircraft_state.current_altitude;
+		  tx_message.output_data.target_heading = mission_input.aircraft_state.current_heading;
+		  tx_message.output_data.target_speed = mission_input.aircraft_state.current_speed;
+
+		  tx_message.output_data.current_waypoint_index = 0U;
+		  tx_message.output_data.mission_state= MISSION_STATE_NAVIGATE;
+		  tx_message.output_data.data_status= DATA_VALID;
+
+		  tx_message.waypoint_list_valid =false;
+
+		  osMessageQueuePut(TxQueueHandle,&tx_message,0U,0U);
+	  }
+
+  }
+  /* USER CODE END StartMissionTask */
+}
+
+/* USER CODE BEGIN Header_StartCommTxTask */
+/**
+* @brief Function implementing the CommTxTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartCommTxTask */
+void StartCommTxTask(void *argument)
+{
+  /* USER CODE BEGIN StartCommTxTask */
+  /* Infinite loop */
+	TxMessage_t tx_message = {0};
+  for(;;)
+  {
+	  if (osMessageQueueGet(
+	                  TxQueueHandle,
+	                  &tx_message,
+	                  NULL,
+	                  osWaitForever) == osOK)
+	          {
+
+	              /*
+	               * 데이터 수신 성공
+	               * 이후 실제 UART 송신 함수 호출 예정
+	               */
+	          }
+  }
+  /* USER CODE END StartCommTxTask */
+}
+
+/* USER CODE BEGIN Header_StartMonitorTask */
+/**
+* @brief Function implementing the MonitorTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartMonitorTask */
+void StartMonitorTask(void *argument)
+{
+  /* USER CODE BEGIN StartMonitorTask */
+  /* Infinite loop */
+  for(;;)
+  {
+    osDelay(1);
+  }
+  /* USER CODE END StartMonitorTask */
+}
+
+/**
+  * @brief  Period elapsed callback in non blocking mode
+  * @note   This function is called  when TIM6 interrupt took place, inside
+  * HAL_TIM_IRQHandler(). It makes a direct call to HAL_IncTick() to increment
+  * a global variable "uwTick" used as application time base.
+  * @param  htim : TIM handle
+  * @retval None
+  */
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+{
+  /* USER CODE BEGIN Callback 0 */
+
+  /* USER CODE END Callback 0 */
+  if (htim->Instance == TIM6)
+  {
+    HAL_IncTick();
+  }
+  /* USER CODE BEGIN Callback 1 */
+
+  /* USER CODE END Callback 1 */
+}
 
 /**
   * @brief  This function is executed in case of error occurrence.
