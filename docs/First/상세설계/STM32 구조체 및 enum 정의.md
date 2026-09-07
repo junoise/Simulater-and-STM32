@@ -179,9 +179,9 @@ typedef enum
 
 typedef enum
 {
-    DATA_UNKNOWN = 0,
-    DATA_VALID,
-    DATA_INVALID
+    DATA_VALID   = 0,
+	DATA_INVALID = 1,
+	DATA_UNKNOWN = 2
 } DataStatus_t;
 
 
@@ -233,9 +233,10 @@ typedef enum
 ----
 typedef enum
 {
-    INITIALIZE = 0,
-    NAVIGATE,
-    MISSION_COMPLETE
+    MISSION_STATE_INITIALIZE = 0,
+	MISSION_STATE_NAVIGATE   = 1,
+	MISSION_STATE_COMPLETE   = 2
+    
 } MissionState_t;
 
 typedef enum
