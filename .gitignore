@@ -1,0 +1,12 @@
+# STM32CubeIDE build output
+**/Debug/
+**/Release/
+
+# Local launch configurations
+*.launch
+
+# Eclipse workspace
+.metadata/
+
+# Windows
+Thumbs.db
