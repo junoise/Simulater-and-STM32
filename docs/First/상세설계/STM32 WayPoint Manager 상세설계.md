@@ -25,7 +25,7 @@
 - 목적 :최종 목적지 정보를 기반으로 Waypoint 목록을 생성한다.
 - 호출 Task : Mission Task
 - 호출 조건 : Mission State가 INITIALIZE 상태이고 유효한 Destination 데이터가 존재할 때 호출한다.
-- 입력 : Destination_t
+- 입력 : AircraftState_t, Destination_t
 - 출력 : -
 - 반환값 :
     - WAYPOINT_GENERATE_SUCCESS
@@ -59,7 +59,7 @@
     - current_waypoint_index가 유효한 범위를 벗어난 경우 유효하지 않은 Waypoint를 반환하지 않는다.
     - 필요 시 오류 상태 또는 별도 실패 코드 처리 방식을 사용한다.
 
-#### 3.3 GetWAypointList
+#### 3.3 GetWaypointList
 - 목적 : 현재 Waypoint Manager가 관리 중인 전체 Waypoint 목록을 외부 모듈에 제공한다.
 - 호출 Task : Mission Task
 - 입력 : 없음
@@ -81,8 +81,8 @@
 - 출력 : 없음
 - 반환값 : current_waypoint_index
 - 처리 절차 :
-    1. 내부에 저장된 current_waypoint_index 값을 확인한다.
-    2. 현재 current_waypoint_index를 반환한다.
+    
+    1. 현재 current_waypoint_index를 반환한다.
 - 오류 처리 : 없음
 
 #### 3.5 UpdateWaypointProgress

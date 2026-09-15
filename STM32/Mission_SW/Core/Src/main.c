@@ -21,6 +21,7 @@
 #include "cmsis_os.h"
 #include "app_types.h"
 #include "data_manager.h"
+#include "waypoint_manager.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 
@@ -327,9 +328,9 @@ void StartCommRxTask(void *argument) {
 	RxMessage_t rx_message = { 0 };
 	MissionInput_t mission_input = { 0 };
 
-	rx_message.aircraft_state.current_latitude = 35.0f;
-	rx_message.aircraft_state.current_longitude = 128.0f;
-	rx_message.aircraft_state.current_altitude = 1000.0f;
+	rx_message.aircraft_state.current_latitude = 10.0f;
+	rx_message.aircraft_state.current_longitude = 103.0f;
+	rx_message.aircraft_state.current_altitude = 700.0f;
 	rx_message.aircraft_state.current_heading = 90.0f;
 	rx_message.aircraft_state.current_speed = 200.0f;
 	rx_message.aircraft_state.current_fuel = 80.0f;
@@ -342,12 +343,11 @@ void StartCommRxTask(void *argument) {
 	rx_message.mission_start_command = 1U;
 	rx_message.mission_command_valid = true;
 	for (;;) {
-		if(UpdateData(&rx_message)==UPDATE_SUCCESS){
-			if(CreateMissionInput(&mission_input)==INPUT_SUCCESS){
+		if (UpdateData(&rx_message) == UPDATE_SUCCESS) {//데이터 유효성 검사 및 내부 데이터 업데이트
+			if (CreateMissionInput(&mission_input) == INPUT_SUCCESS) {
 				osMessageQueuePut(RxQueueHandle, &mission_input, 0U, 0U);
 			}
 		}
-
 
 		osDelay(100U);
 	}
@@ -367,9 +367,10 @@ void StartMissionTask(void *argument) {
 
 	MissionInput_t mission_input = { 0 };
 	TxMessage_t tx_message = { 0 };
+	WaypointProgressResult_t progress_result= WAYPOINT_CHECK_FAIL;
 	for (;;) {
 		if (osMessageQueueGet(RxQueueHandle, &mission_input, NULL,
-				osWaitForever) == osOK) {
+		osWaitForever) == osOK) {
 			tx_message.output_data.target_altitude =
 					mission_input.aircraft_state.current_altitude;
 			tx_message.output_data.target_heading =
@@ -377,11 +378,35 @@ void StartMissionTask(void *argument) {
 			tx_message.output_data.target_speed =
 					mission_input.aircraft_state.current_speed;
 
-			tx_message.output_data.current_waypoint_index = 0U;
+
 			tx_message.output_data.mission_state = MISSION_STATE_NAVIGATE;
 			tx_message.output_data.data_status = DATA_VALID;
 
 			tx_message.waypoint_list_valid = false;
+
+			if (mission_input.destination_valid == true) {
+
+			    if (GenerateWaypointList(&mission_input.aircraft_state,&mission_input.destination)== WAYPOINT_GENERATE_SUCCESS) { //waypoint list생성
+
+			        tx_message.waypoint_list_valid =GetWaypointList(&tx_message.waypoint_list);//waypoint 받아오기
+			    }
+			}
+			progress_result =UpdateWaypointProgress(&mission_input.aircraft_state);//도달여부 확인
+			tx_message.output_data.current_waypoint_index = GetCurrentWaypointIndex();
+
+			switch (progress_result){
+			case WAYPOINT_CHECK_FAIL:
+				break;
+			case WAYPOINT_IN_PROGRESS:
+				//guidance함수 생성 후 전달
+				break;
+			case FINAL_WAYPOINT_REACHED:
+				tx_message.output_data.mission_state = MISSION_STATE_COMPLETE;
+				break;
+			default:
+			    break;
+			}
+
 
 			osMessageQueuePut(TxQueueHandle, &tx_message, 0U, 0U);
 		}
