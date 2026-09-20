@@ -22,6 +22,6 @@ MissionInputResult_t CreateMissionInput(MissionInput_t *missioninput);
 
 DataStatus_t GetDataStatus(void);
 //상세설계 3.6
-
-
+bool GetCurrentFuel(float *fuel);
+//상세설계 3.7
 #endif

@@ -18,7 +18,7 @@
 
                     Unity Simulator                                      System Monitor          
                          ↓                                             ↙      ↓       ↘
-                    Communication                             Comm Status  Data Status  Fuel/System
+                    Communication                             Comm Status             Fuel Status
                          ↓                                              \      |       /
                      Data Manager                                         System Status
                          ↓
@@ -76,7 +76,8 @@
 ### 3.3 Mission Manager
 
   - 입력
-    없음
+    MissionInput_t
+    SystemStatus_t
   
   - 처리
     현재 Mission State를 확인한다.
@@ -142,24 +143,25 @@
     없음
     
 ### 3.6 System Monitor
+
   - 입력
-    현재 연료량
-    Data Manger 의 데이터 상태
-    Communication의 통신 상태
-  
+    Monitor Task가 GetCommunicationStatus()로 조회한 수신 통신 상태
+    Monitor Task가 GetCurrentFuel()로 조회한 마지막 정상 연료량
+
   - 처리
-    현재 연료량을 기반으로 연료 상태를 판단한다.
-    각 모듈의 상태 정보를 기반으로 전체 시스템 상태를 판단한다.
-    Communication status 와 System status는 stm32 내부 판단용 변수이다.
-    
+    Monitor Task에서만 내부 시스템 상태를 갱신한다.
+    Communication 상태를 저장하고, 검증된 연료량을 기준값과 비교한다.
+    통신 타임아웃은 Communication이 판단하고 데이터 값의 유효성은 Data Manager가 판단한다.
+
   - 출력
-    fuel status
-    
-  - 내부 상태    
-    -Fuel status
-    -Communication status
-    -System status
-    
+    SystemStatus_t (communication_status, fuel_status)
+    Monitor Task → System Status Queue → Mission Task로 전달한다.
+
+  - 내부 상태
+    Latest SystemStatus_t
+    최초 연료 판단 전에는 Monitor Task에서 Queue 전달을 보류한다.
+    COMM_OK는 구조체 0 초기화로 가정하지 않는다. 최초 정상 수신 전은 COMM_ERROR다.
+
 ### 3.7 OutputData Manager
   - 입력
     - Guidance의 target_altitude
@@ -169,7 +171,7 @@
     - Waypoint Manager의 current_waypoint_index
     - Mission Manager의 mission_state
     - Data Manager의 data_status
-    - System Monitor의 fuel_status
+    - fuel_status는 1차 S2U 출력에서 제외하며 Mission 판단용 SystemStatus_t에 유지한다.
   
   - 처리
     각 모듈에서 전달받은 출력 데이터를 저장한다.
@@ -189,7 +191,6 @@
     - current_waypoint_index
     - mission_state
     - data_status
-    - fuel_status
     - waypoint_list_updated
     
 ## 4. 데이터 흐름
@@ -280,7 +281,7 @@ Task 간 데이터는 Queue 또는 공유 데이터 구조를 통해 전달한�
 - 역할
   - 현재 연료량 확인
   - Fuel Status 판단
-  - Data Status 및 Communication Status 확인
+  - GetCommunicationStatus() 및 GetCurrentFuel() 조회
   - 시스템 이상 상태 감시
 
 - 실행 주기
@@ -307,13 +308,14 @@ Task 간 데이터는 Queue 또는 공유 데이터 구조를 통해 전달한�
   - current_waypoint_index
   - mission_state
   
+- Mission Task / OutputData Manager
+  - Data Manager의 GetDataStatus()를 조회하여 송신 OutputData_t에 반영한다.
 - Comm TX Task
-  - Data Manager에서 최신 data_status를 조회한다.
-  - System Monitor에서 최신 fuel_status를 조회한다.
-  - Mission Task에서 전달된 최신 Output Data와 상태값을 조합하여 Unity Simulator로 송신한다.
-  
-- Monitor Task
-  - Fuel Status 및 시스템 상태 정보를 갱신한다.
+  - TX Queue로 받은 TxMessage_t의 패킷 생성·송신을 담당한다.
+- Monitor Task → Mission Task
+  - 통신 상태와 정상 연료량을 조회해 System Monitor를 갱신한다.
+  - GetSystemStatus()로 얻은 SystemStatus_t를 기존 System Status Queue로 전달한다.
+  - 최초 유효 연료량으로 판단하기 전에는 전달을 보류한다.
 
 ### 5.6 Task 우선순위 및 주기
 
@@ -346,12 +348,12 @@ task 우선순위는 초기 설계값이며, 구현 후 각 task의 실행시간
   - Comm TX Task가 데이터를 읽어도 Queue 항목을 유지하는 비소비 방식(Peek)을 적용한다.
   - 새로운 Output Data가 생성되지 않은 경우 마지막으로 생성된 Output Data를 반복 송신한다.
 
-- Monitor Task → Comm TX Task
-  - 최신 Fuel Status를 관리한다.
-  - Fuel Status는 가장 최근의 상태값 유지가 중요하므로 최신값 우선 정책을 적용한다.
-  - 새로운 Fuel Status가 생성되면 기존 상태값을 갱신한다.
-  - Comm TX Task는 System Monitor에서 가장 최근의 Fuel Status를 조회하여 Output Data에 반영한다.
-  - 초기 Fuel Status는 UNKNOWN으로 설정한다.
+- Monitor Task → Mission Task
+  - SystemStatus_t를 길이 1 System Status Queue로 전달하며 최신 상태 우선 정책을 적용한다.
+  - 최초 상태 수신 전에는 Mission 처리를 시작하지 않는다. 초기 목적지·시작 명령을 포함한 입력은 소실되지 않도록 보존한다.
+  - 최초 상태 이후 새 값이 없으면 마지막 상태를 사용한다. UART 단절 시에도 Monitor Task는 COMM_ERROR 갱신을 계속한다.
+  - 최초 연료 판단 이후 연료 조회 실패 시 기존 fuel_status를 유지하고 최신 통신 상태를 전달한다.
+  - SystemStatus_t에 연료 UNKNOWN enum을 추가하지 않는다. 미준비 여부는 Monitor Task의 준비 표시로 관리한다.
 
 - Waypoint List 변경 데이터
   - Waypoint List는 초기 생성 또는 변경 시에만 전송한다.
@@ -372,11 +374,21 @@ task 우선순위는 초기 설계값이며, 구현 후 각 task의 실행시간
 
 - Fuel Low
   - System Monitor에서 Fuel Status를 LOW로 설정한다.
-  - 1차 구현에서는 Mission Task의 정상 임무 흐름을 유지하고 Fuel Status만 Unity Simulator로 송신한다.
+  - 1차 구현에서는 정상 임무 흐름을 유지한다. fuel_status는 내부 SystemStatus_t로 제공하며 Unity 주기 출력에는 포함하지 않는다.
   - 2차 구현에서는 Fuel Low 상황에 대응하는 긴급 임무 로직을 수행한다.
-  - Comm TX Task는 최신 Output Data와 Fuel Status를 Unity Simulator로 송신한다.
+  - Fuel Low에 따른 비상 임무 처리는 2차 범위다.
 ___________________________________________________________________________________ 
-주기 패킷: target_*, current_waypoint_index, mission_state, data_status, fuel_status
+주기 패킷: target_*, current_waypoint_index, mission_state, data_status
 이벤트 패킷: waypoint_list
 waypoint_list_updated == TRUE일 때만 이벤트 패킷 송신
 Unity는 Packet Type 보고 두 형식을 구분
+
+## 6. 통신·연료 상태 연계 보완
+
+- Communication에 GetCommunicationStatus(), Data Manager에 GetCurrentFuel() 조회 기능을 추가한다. 기존 GetDataStatus()의 역할은 변경하지 않는다.
+- 정상 패킷의 완전한 수신·형식 검사 성공 시각으로 수신 타임아웃을 판단한다. 값 범위 오류와 통신 오류는 구분한다.
+- Communication과 Data Manager는 System Monitor의 갱신 함수를 직접 호출하지 않는다. Monitor Task가 getter 결과를 전달한다.
+- 공유 수신 기록 및 정상 연료량의 갱신·조회 보호 방식은 TBD다. getter 또는 static 사용만으로 동기화가 해결된 것으로 보지 않는다.
+- COMM_TIMEOUT_MS와 FUEL_LOW_THRESHOLD는 TBD다.
+- Mission Task의 RX 무기한 대기로 시스템 오류 확인이 정지하지 않도록 상태 확인 주기와 대기 방식을 구현 시 확정한다.
+- Queue 덮어쓰기와 TX 반복 송신은 설계 정책이다. 실제 CMSIS-RTOS API 구현 및 일회성 이벤트 보존과 대조해야 하며, 현재 코드에서 이미 구현된 것으로 간주하지 않는다.

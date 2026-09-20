@@ -272,3 +272,91 @@ bool NavigationMath_InterpolateGreatCircle(float start_latitude,
 
 	return true;
 }
+
+bool NavigationMath_CalculateInitialBearing(
+        float start_latitude,
+        float start_longitude,
+        float end_latitude,
+        float end_longitude,
+        float *bearing_degree)
+{
+    float start_latitude_rad;
+    float end_latitude_rad;
+    float longitude_difference_rad;
+
+    float east_component;
+    float north_component;
+    float direction_magnitude;
+    float bearing_rad;
+    float result_degree;
+
+    /* 방향 벡터가 거의 0인지 판단하는 수치 계산용 기준 */
+    const float DIRECTION_EPSILON = 1.0e-7f;
+
+    if (bearing_degree == NULL) {
+        return false;
+    }
+
+    if ((!IsCoordinateValid(start_latitude, start_longitude))
+            || (!IsCoordinateValid(end_latitude, end_longitude))) {
+        return false;
+    }
+
+    start_latitude_rad =
+            ConvertDegreesToRadians(start_latitude);
+
+    end_latitude_rad =
+            ConvertDegreesToRadians(end_latitude);
+
+    longitude_difference_rad =
+            ConvertDegreesToRadians(
+                    end_longitude - start_longitude);
+
+    /* 출발점이 극점에 가까우면 북쪽 기준 방향이 불안정하다. */
+    if (fabsf(cosf(start_latitude_rad)) < DIRECTION_EPSILON) {
+        return false;
+    }
+
+    east_component =
+            sinf(longitude_difference_rad)
+            * cosf(end_latitude_rad);
+
+    north_component =
+            cosf(start_latitude_rad) * sinf(end_latitude_rad)
+            - sinf(start_latitude_rad) * cosf(end_latitude_rad)
+                    * cosf(longitude_difference_rad);
+
+    direction_magnitude = sqrtf(
+            east_component * east_component
+            + north_component * north_component);
+
+    /*
+     * 두 위치가 같거나 대척점에 가까우면
+     * 방위각을 안정적으로 결정할 수 없다.
+     */
+    if ((!isfinite(direction_magnitude))
+            || (direction_magnitude < DIRECTION_EPSILON)) {
+        return false;
+    }
+
+    bearing_rad = atan2f(east_component, north_component);
+
+    result_degree = ConvertRadiansToDegrees(bearing_rad);
+
+    if (!isfinite(result_degree)) {
+        return false;
+    }
+
+    if (result_degree < 0.0f) {
+        result_degree += 360.0f;
+    }
+
+    /* float 반올림으로 360도가 되는 경우도 0도로 정규화 */
+    if (result_degree >= 360.0f) {
+        result_degree = 0.0f;
+    }
+
+    *bearing_degree = result_degree;
+
+    return true;
+}

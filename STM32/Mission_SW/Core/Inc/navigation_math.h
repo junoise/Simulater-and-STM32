@@ -20,5 +20,11 @@ bool NavigationMath_InterpolateGreatCircle(
         float *result_latitude,
         float *result_longitude);
 
+bool NavigationMath_CalculateInitialBearing(
+        float start_latitude,
+        float start_longitude,
+        float end_latitude,
+        float end_longitude,
+        float *bearing_degree);
 
 #endif

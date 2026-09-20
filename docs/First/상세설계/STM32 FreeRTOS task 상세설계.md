@@ -69,7 +69,7 @@ Unity
 
 ### SystemMonitor
 
-Communication Status + current_fuel
+GetCommunicationStatus() + GetCurrentFuel() 조회 성공값
           ↓
       Monitor Task
           ↓
@@ -80,3 +80,18 @@ System Status Queue
       Mission Task
 
 
+
+### 3. Monitor 상태 공급과 최초 수신
+
+- 기존 4 Task와 3 Queue 구성을 유지한다.
+- Communication은 마지막 정상 패킷 수신 이력·시각을 저장한다. Monitor Task는 GetCommunicationStatus()로 미수신/타임아웃을 확인한다.
+- Monitor Task는 GetCurrentFuel() 성공 시에만 CheckFuelStatus()로 연료 상태를 갱신한다. 최초 유효 연료 확보 전에는 System Status Queue 전송을 보류한다.
+- Mission Task는 최초 SystemStatus_t가 도착하기 전 INITIALIZE에서 임무 처리를 기다린다. 이때 Monitor Task 실행을 막는 busy wait를 사용하지 않는다.
+- 대기 중 초기 목적지·시작 명령이 포함된 MissionInput_t를 버리거나 일반 주기 데이터로 덮어써서는 안 된다. 초기 입력 보존과 Queue 소비 순서는 Task 연결 시 검증한다.
+- 최초 준비 후에는 연료 조회 실패 여부와 무관하게 저장된 연료 상태와 최신 통신 상태를 전달한다. 이후 새 시스템 상태가 없으면 마지막 수신 상태를 사용한다.
+- RX 데이터가 끊겨도 Monitor Task의 타임아웃 판단은 계속되어야 한다. Mission Task의 RX 무기한 대기가 통신 오류 확인을 가로막지 않도록 유한 대기 또는 상태 확인 주기 등의 구체 방식을 구현 시 확정한다. 새 Aircraft State 없이 Guidance를 반복 계산하지 않는다.
+- 통신 오류가 생겼다는 사실을 Unity에 보고할 송신 흐름은 OutputData/Comm TX 연결에서 함께 확인한다.
+- Queue 최신값 정책은 별도 구현이 필요하다. 일반 osMessageQueuePut()은 Full 시 자동 덮어쓰기를 제공하지 않는다.
+- 초기 목적지·시작 명령과 변경 Waypoint 목록 같은 이벤트 데이터는 소비 전 덮어쓰기로 유실되지 않도록 별도 확인한다.
+- GetDataStatus()는 데이터 유효성 판단용이며 통신 정상 여부를 대신하지 않는다.
+- 통신 타임아웃, 연료 기준값과 공유 데이터 동기화 방식은 TBD다. 표의 Task 주기·우선순위는 설계 초기값이며 코드와 실측 확인이 필요하다.
