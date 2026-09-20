@@ -23,7 +23,14 @@ public class LandingSystem : MonoBehaviour
 
     [Header("Height Sensor")]
     public Transform heightSensor;
-    public float groundRayDistance = 1000f;
+    public float groundRayDistance = 10000f;
+
+    [Header("Brief Height Dropout - Local Test Settings")]
+    [Range(0f, 0.5f)]
+    public float heightHoldSeconds = 0.5f;
+
+    [Range(0f, 50f)]
+    public float heightHoldDistance = 50f;
 
     [Header("Detection Timing")]
     public float airborneArmTime = 1f;
@@ -45,6 +52,7 @@ public class LandingSystem : MonoBehaviour
 
     public bool HasGroundReading { get; private set; }
     public float SensorHeight { get; private set; }
+
     public float VerticalSpeed { get; private set; }
     public float GroundSpeed { get; private set; }
     public float BankAngle { get; private set; }
@@ -74,10 +82,20 @@ public class LandingSystem : MonoBehaviour
 
     private int ignorePhysicsSteps;
 
+    private float lastHeightTime = float.NegativeInfinity;
+    private float lastHeight;
+    private Vector3 lastSensorPosition;
+    private Vector3 lastHeightUp;
+
     private Vector3 Up =>
         Physics.gravity.sqrMagnitude > 0.001f
             ? -Physics.gravity.normalized
             : Vector3.up;
+
+    public float GroundReadingAge =>
+        float.IsNegativeInfinity(lastHeightTime)
+            ? float.PositiveInfinity
+            : Mathf.Max(0f, Time.time - lastHeightTime);
 
     public bool HasValidSetup
     {
@@ -93,9 +111,7 @@ public class LandingSystem : MonoBehaviour
             }
 
             if (runwayArea != null)
-            {
                 return runwayArea.IsConfigured;
-            }
 
             return runwayCollider != null && groundMask.value != 0;
         }
@@ -130,6 +146,8 @@ public class LandingSystem : MonoBehaviour
 
         HasGroundReading = false;
         SensorHeight = float.NaN;
+        lastHeightTime = float.NegativeInfinity;
+
         VerticalSpeed = 0f;
         GroundSpeed = 0f;
         BankAngle = 0f;
@@ -156,17 +174,75 @@ public class LandingSystem : MonoBehaviour
         ignorePhysicsSteps = 2;
     }
 
+    public bool TryGetAutopilotHeight(out float height, out bool held)
+    {
+        height = float.NaN;
+        held = false;
+
+        if (!isActiveAndEnabled ||
+            heightSensor == null ||
+            float.IsNegativeInfinity(lastHeightTime))
+        {
+            return false;
+        }
+
+        float age = GroundReadingAge;
+
+        float freshWindow = Mathf.Max(
+            0.05f,
+            Time.fixedDeltaTime * 2f
+        );
+
+        bool fresh = HasGroundReading && age <= freshWindow;
+
+        if (!fresh &&
+            age > Mathf.Clamp(heightHoldSeconds, 0f, 0.5f))
+        {
+            return false;
+        }
+
+        Vector3 delta = heightSensor.position - lastSensorPosition;
+
+        if (Vector3.Dot(lastHeightUp, Up) < 0.999f)
+            return false;
+
+        float horizontalMove = Vector3.ProjectOnPlane(
+            delta,
+            lastHeightUp
+        ).magnitude;
+
+        if (!fresh &&
+            horizontalMove > Mathf.Clamp(heightHoldDistance, 0f, 50f))
+        {
+            return false;
+        }
+
+        if (delta.magnitude > 100f)
+            return false;
+
+        held = !fresh;
+
+        height = Mathf.Min(
+            lastHeight,
+            lastHeight + Vector3.Dot(delta, lastHeightUp)
+        ) - horizontalMove;
+
+        if (held)
+            height -= 30f;
+
+        height = Mathf.Max(0f, height);
+
+        return !float.IsNaN(height) && !float.IsInfinity(height);
+    }
+
     private bool ReadWheel(
         WheelCollider wheel,
-        out bool onRunway
-    )
+        out bool onRunway)
     {
         onRunway = false;
 
         if (!wheel.GetGroundHit(out WheelHit hit))
-        {
             return false;
-        }
 
         if (runwayArea != null)
         {
@@ -194,7 +270,8 @@ public class LandingSystem : MonoBehaviour
                 heightSensor.position,
                 -up,
                 groundRayDistance,
-                out hit
+                out hit,
+                requireLandingSlope: false
             );
         }
         else
@@ -209,9 +286,22 @@ public class LandingSystem : MonoBehaviour
             );
         }
 
+        HasGroundReading = HasGroundReading &&
+            !float.IsNaN(hit.distance) &&
+            !float.IsInfinity(hit.distance) &&
+            hit.distance >= 0f;
+
         SensorHeight = HasGroundReading
             ? hit.distance
             : float.NaN;
+
+        if (HasGroundReading)
+        {
+            lastHeight = hit.distance;
+            lastHeightTime = Time.time;
+            lastSensorPosition = heightSensor.position;
+            lastHeightUp = up;
+        }
     }
 
     private void FixedUpdate()
@@ -227,8 +317,10 @@ public class LandingSystem : MonoBehaviour
 
         VerticalSpeed = Vector3.Dot(rb.linearVelocity, up);
 
-        GroundSpeed =
-            Vector3.ProjectOnPlane(rb.linearVelocity, up).magnitude;
+        GroundSpeed = Vector3.ProjectOnPlane(
+            rb.linearVelocity,
+            up
+        ).magnitude;
 
         BankAngle = Mathf.Abs(
             Mathf.Atan2(
@@ -266,14 +358,10 @@ public class LandingSystem : MonoBehaviour
             lastAirborneVerticalSpeed = VerticalSpeed;
 
             if (airborneTime >= airborneArmTime)
-            {
                 armed = true;
-            }
 
             if (airborneTime >= airborneConfirmTime)
-            {
                 pendingTouchdown = true;
-            }
         }
         else
         {
@@ -286,7 +374,9 @@ public class LandingSystem : MonoBehaviour
 
                 OffRunway |= outsideRunway;
 
-                if (pendingTouchdown && NoseGrounded && !mainGrounded)
+                if (pendingTouchdown &&
+                    NoseGrounded &&
+                    !mainGrounded)
                 {
                     NoseFirst = true;
                 }
@@ -295,8 +385,10 @@ public class LandingSystem : MonoBehaviour
                 {
                     TouchdownCount++;
 
-                    float sinkRate =
-                        Mathf.Max(0f, -lastAirborneVerticalSpeed);
+                    float sinkRate = Mathf.Max(
+                        0f,
+                        -lastAirborneVerticalSpeed
+                    );
 
                     WorstTouchdownSinkRate = Mathf.Max(
                         WorstTouchdownSinkRate,
@@ -326,9 +418,7 @@ public class LandingSystem : MonoBehaviour
         if (!anyGrounded)
         {
             if (airborneTime >= airborneConfirmTime)
-            {
                 Phase = LandingPhase.Airborne;
-            }
 
             return;
         }
@@ -370,18 +460,15 @@ public class LandingSystem : MonoBehaviour
     private void OnCollisionEnter(Collision collision)
     {
         if (!enabled || !armed || ignorePhysicsSteps > 0)
-        {
             return;
-        }
 
         for (int i = 0; i < collision.contactCount; i++)
         {
-            Collider ownCollider = collision.GetContact(i).thisCollider;
+            Collider ownCollider =
+                collision.GetContact(i).thisCollider;
 
             if (ownCollider is WheelCollider)
-            {
                 continue;
-            }
 
             BodyCollision = true;
             Phase = LandingPhase.Failed;

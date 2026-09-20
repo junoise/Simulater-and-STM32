@@ -26,9 +26,7 @@ public class RunwayLandingArea : MonoBehaviour
         get
         {
             if (startPoint == null || endPoint == null)
-            {
                 return 0f;
-            }
 
             return Vector3.ProjectOnPlane(
                 endPoint.position - startPoint.position,
@@ -42,9 +40,7 @@ public class RunwayLandingArea : MonoBehaviour
         get
         {
             if (Length < 0.01f)
-            {
                 return Vector3.forward;
-            }
 
             return Vector3.ProjectOnPlane(
                 endPoint.position - startPoint.position,
@@ -72,9 +68,7 @@ public class RunwayLandingArea : MonoBehaviour
     public bool ContainsPoint(Vector3 point)
     {
         if (!IsConfigured)
-        {
             return false;
-        }
 
         Vector3 forward = Forward;
         Vector3 right = Vector3.Cross(Up, forward).normalized;
@@ -83,16 +77,12 @@ public class RunwayLandingArea : MonoBehaviour
         float along = Vector3.Dot(offset, forward);
 
         if (along < 0f || along > Length)
-        {
             return false;
-        }
 
         float sideways = Mathf.Abs(Vector3.Dot(offset, right));
 
         if (sideways > width * 0.5f)
-        {
             return false;
-        }
 
         Vector3 center = Vector3.Lerp(
             startPoint.position,
@@ -108,8 +98,7 @@ public class RunwayLandingArea : MonoBehaviour
     public bool ContainsContact(
         Collider contactCollider,
         Vector3 point,
-        Vector3 normal
-    )
+        Vector3 normal)
     {
         return IsTerrainCollider(contactCollider) &&
                Vector3.Dot(normal.normalized, Up) >= minimumUpNormal &&
@@ -120,15 +109,13 @@ public class RunwayLandingArea : MonoBehaviour
         Vector3 origin,
         Vector3 direction,
         float distance,
-        out RaycastHit result
-    )
+        out RaycastHit result,
+        bool requireLandingSlope = true)
     {
         result = default;
 
         if (terrainRoot == null)
-        {
             return false;
-        }
 
         RaycastHit[] hits = Physics.RaycastAll(
             origin,
@@ -144,19 +131,16 @@ public class RunwayLandingArea : MonoBehaviour
         foreach (RaycastHit hit in hits)
         {
             if (!IsTerrainCollider(hit.collider))
-            {
                 continue;
-            }
 
-            if (Vector3.Dot(hit.normal.normalized, Up) < minimumUpNormal)
+            if (requireLandingSlope &&
+                Vector3.Dot(hit.normal.normalized, Up) < minimumUpNormal)
             {
                 continue;
             }
 
             if (hit.distance >= nearestDistance)
-            {
                 continue;
-            }
 
             nearestDistance = hit.distance;
             result = hit;
@@ -168,8 +152,7 @@ public class RunwayLandingArea : MonoBehaviour
 
     public bool TryGetGroundBelow(
         Vector3 position,
-        out RaycastHit result
-    )
+        out RaycastHit result)
     {
         return TryRaycastTerrain(
             position + Up * 200f,
@@ -184,7 +167,10 @@ public class RunwayLandingArea : MonoBehaviour
     {
         if (Application.isPlaying)
         {
-            Debug.LogWarning("Exit Play mode before snapping endpoints.", this);
+            Debug.LogWarning(
+                "Exit Play mode before snapping endpoints.",
+                this
+            );
             return;
         }
 
@@ -251,9 +237,7 @@ public class RunwayLandingArea : MonoBehaviour
         }
 
         if (!IsConfigured)
-        {
             return;
-        }
 
         Vector3 side =
             Vector3.Cross(Up, Forward).normalized * width * 0.5f;

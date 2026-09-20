@@ -1,4 +1,6 @@
+using TMPro;
 using UnityEngine;
+using UnityEngine.EventSystems;
 using UnityEngine.UI;
 
 [DefaultExecutionOrder(-100)]
@@ -41,7 +43,21 @@ public class AirlinerPhysics : MonoBehaviour
     [Header("Mass Distribution")]
     public Vector3 centerOfMass = new Vector3(0f, 1f, -1f);
 
+    [Header("Input Transition")]
+    public float controlInputRate = 3f;
+
     public float BrakeInput { get; private set; }
+
+    public Vector3 ControlInput { get; private set; }
+
+    public bool AutomaticControl { get; private set; }
+
+    public bool AnyWheelGrounded =>
+        (noseWheel != null && noseWheel.isGrounded) ||
+        (leftWheel != null && leftWheel.isGrounded) ||
+        (rightWheel != null && rightWheel.isGrounded);
+
+    private Vector3 automaticInput;
 
     private void Awake()
     {
@@ -59,15 +75,49 @@ public class AirlinerPhysics : MonoBehaviour
                 "AirlinerPhysics: Assign all three WheelColliders.",
                 this
             );
-
             enabled = false;
             return;
         }
 
-        SetThrottle(throttle);
+        WriteThrottle(throttle);
     }
 
-    public void SetThrottle(float value)
+    public static bool IsEditingText()
+    {
+        if (EventSystem.current == null)
+        {
+            return false;
+        }
+
+        GameObject selected =
+            EventSystem.current.currentSelectedGameObject;
+
+        if (selected == null)
+        {
+            return false;
+        }
+
+        TMP_InputField field =
+            selected.GetComponentInParent<TMP_InputField>();
+
+        return field != null && field.isFocused;
+    }
+
+    public static bool HasManualControlInput()
+    {
+        if (IsEditingText())
+        {
+            return false;
+        }
+
+        return Mathf.Abs(Input.GetAxisRaw("Vertical")) > 0.2f ||
+               Mathf.Abs(Input.GetAxisRaw("Horizontal")) > 0.2f ||
+               Input.GetKey(KeyCode.Q) ||
+               Input.GetKey(KeyCode.E) ||
+               Input.GetKey(KeyCode.Space);
+    }
+
+    private void WriteThrottle(float value)
     {
         throttle = Mathf.Clamp01(value);
 
@@ -76,9 +126,47 @@ public class AirlinerPhysics : MonoBehaviour
             throttleSlider.SetValueWithoutNotify(throttle);
         }
     }
+    public void SetThrottle(float value)
+    {
+        if (!AutomaticControl)
+        {
+            WriteThrottle(value);
+        }
+    }
+
+    public void SetAutomaticInput(Vector3 axes, float throttleValue)
+    {
+        AutomaticControl = true;
+
+        automaticInput = new Vector3(
+            Mathf.Clamp(axes.x, -1f, 1f),
+            Mathf.Clamp(axes.y, -1f, 1f),
+            Mathf.Clamp(axes.z, -1f, 1f)
+        );
+
+        WriteThrottle(throttleValue);
+    }
+
+    public void ReleaseAutomaticControl()
+    {
+        AutomaticControl = false;
+        automaticInput = Vector3.zero;
+
+        if (throttleSlider != null)
+        {
+            throttleSlider.interactable = true;
+        }
+    }
+
+    private void OnDisable()
+    {
+        ReleaseAutomaticControl();
+    }
 
     public void ResetGroundControls()
     {
+        ReleaseAutomaticControl();
+        ControlInput = Vector3.zero;
         BrakeInput = 0f;
 
         if (noseWheel != null)
@@ -108,11 +196,48 @@ public class AirlinerPhysics : MonoBehaviour
         if (throttleSlider != null)
         {
             throttleSlider.SetValueWithoutNotify(throttle);
+            throttleSlider.interactable = !AutomaticControl;
         }
+    }
+
+    private Vector3 ReadManualInput()
+    {
+        if (IsEditingText())
+        {
+            return Vector3.zero;
+        }
+
+        float yaw = 0f;
+
+        if (Input.GetKey(KeyCode.E)) yaw += 1f;
+        if (Input.GetKey(KeyCode.Q)) yaw -= 1f;
+
+        return new Vector3(
+            Input.GetAxis("Vertical"),
+            Input.GetAxis("Horizontal"),
+            yaw
+        );
     }
 
     private void FixedUpdate()
     {
+        if (rb == null || rb.isKinematic)
+        {
+            return;
+        }
+
+        Vector3 requested = AutomaticControl
+            ? automaticInput
+            : ReadManualInput();
+
+        float step = Mathf.Max(0f, controlInputRate) * Time.fixedDeltaTime;
+
+        ControlInput = new Vector3(
+            Mathf.MoveTowards(ControlInput.x, requested.x, step),
+            Mathf.MoveTowards(ControlInput.y, requested.y, step),
+            Mathf.MoveTowards(ControlInput.z, requested.z, step)
+        );
+
         ApplyThrust();
         ApplyAerodynamics();
         ApplyControlSurfaces();
@@ -174,54 +299,34 @@ public class AirlinerPhysics : MonoBehaviour
         Vector3 localAngularVelocity =
             transform.InverseTransformDirection(rb.angularVelocity);
 
-        float pitchDamping =
-            localAngularVelocity.x * forwardSpeed * 50f;
+        rb.AddRelativeTorque(
+            Vector3.right *
+            (-localAngularVelocity.x * forwardSpeed * 50f)
+        );
 
-        float yawDamping =
-            localAngularVelocity.y * forwardSpeed * 50f;
-
-        rb.AddRelativeTorque(Vector3.right * -pitchDamping);
-        rb.AddRelativeTorque(Vector3.up * -yawDamping);
-    }
-
-    private float ReadYawInput()
-    {
-        float input = 0f;
-
-        if (Input.GetKey(KeyCode.E))
-        {
-            input += 1f;
-        }
-
-        if (Input.GetKey(KeyCode.Q))
-        {
-            input -= 1f;
-        }
-
-        return input;
+        rb.AddRelativeTorque(
+            Vector3.up *
+            (-localAngularVelocity.y * forwardSpeed * 50f)
+        );
     }
 
     private void ApplyControlSurfaces()
     {
-        float pitchInput = Input.GetAxis("Vertical");
-        float rollInput = Input.GetAxis("Horizontal");
-        float yawInput = ReadYawInput();
-
         float forwardSpeed =
             Vector3.Dot(rb.linearVelocity, transform.forward);
 
-        float controlEfficiency = Mathf.Max(0f, forwardSpeed * 0.1f);
+        float efficiency = Mathf.Max(0f, forwardSpeed * 0.1f);
 
         rb.AddRelativeTorque(
-            Vector3.right * pitchInput * pitchPower * controlEfficiency
+            Vector3.right * ControlInput.x * pitchPower * efficiency
         );
 
         rb.AddRelativeTorque(
-            Vector3.forward * -rollInput * rollPower * controlEfficiency
+            Vector3.forward * -ControlInput.y * rollPower * efficiency
         );
 
         rb.AddRelativeTorque(
-            Vector3.up * yawInput * yawPower * controlEfficiency
+            Vector3.up * ControlInput.z * yawPower * efficiency
         );
     }
 
@@ -234,25 +339,24 @@ public class AirlinerPhysics : MonoBehaviour
         float groundSpeed =
             Vector3.ProjectOnPlane(rb.linearVelocity, up).magnitude;
 
-        float speedBlend = Mathf.InverseLerp(
+        float blend = Mathf.InverseLerp(
             steeringLimitStartSpeed,
             steeringLimitFullSpeed,
             groundSpeed
         );
 
-        float availableSteering = Mathf.Lerp(
-            steerAngle,
-            highSpeedSteerAngle,
-            speedBlend
-        );
+        float availableSteering =
+            Mathf.Lerp(steerAngle, highSpeedSteerAngle, blend);
 
-        noseWheel.steerAngle = ReadYawInput() * availableSteering;
+        noseWheel.steerAngle = ControlInput.z * availableSteering;
 
-        bool mainGearGrounded =
-            leftWheel.isGrounded || rightWheel.isGrounded;
+        bool braking =
+            !AutomaticControl &&
+            !IsEditingText() &&
+            Input.GetKey(KeyCode.Space) &&
+            (leftWheel.isGrounded || rightWheel.isGrounded);
 
-        float targetBrake =
-            Input.GetKey(KeyCode.Space) && mainGearGrounded ? 1f : 0f;
+        float targetBrake = braking ? 1f : 0f;
 
         float changeRate = targetBrake > BrakeInput
             ? brakeApplyRate
