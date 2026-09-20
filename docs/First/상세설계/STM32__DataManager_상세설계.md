@@ -30,6 +30,7 @@
 - Aircraft State Valid Status
 - Destination Valid Status
 - Mission Command Valid Status
+- 정상 Aircraft State 확보 이력: 최초 false, 정상 Aircraft State 저장 성공 후 true. 마지막 검사 결과인 Aircraft State Valid Status와 구분한다.
 
 ---
 
@@ -87,7 +88,8 @@
 - 오류 처리 :
     - 데이터가 정상 범위를 벗어난 경우 해당 Mission Command 는 유효하지 않은 데이터로 판단한다.
     - 유효하지 않은 Mission Command는 최신 정상 데이터로 갱신하지 않는다.
-    - Mission Command Valid Status를 실패 상태로 갱신한다.
+    - Mission Command Valid Status
+- 정상 Aircraft State 확보 이력: 최초 false, 정상 Aircraft State 저장 성공 후 true. 마지막 검사 결과인 Aircraft State Valid Status와 구분한다.를 실패 상태로 갱신한다.
 
 #### 3.4 UpdateData
 - 목적 : 유효성 검사를 통과한 데이터를 Data Manager의 내부 상태에 최신 값으로 저장한다.
@@ -154,6 +156,26 @@
 - 오류 처리 :없음
 ---
 
+#### 3.7 GetCurrentFuel
+- 목적: 마지막으로 검증을 통과해 저장된 연료량을 Monitor Task에 제공한다.
+- 호출 Task: Monitor Task
+- 입력 데이터: 없음
+- 출력 인자: float 포인터. 조회 성공 시 연료량(0~100)을 복사한다.
+- 반환값: bool
+    - true: 저장된 정상 연료량을 복사함
+    - false: 출력 포인터가 NULL이거나 정상 Aircraft State를 확보한 이력이 없음
+- 처리 절차:
+    1. 출력 포인터를 검사한다.
+    2. 정상 Aircraft State 확보 이력과 latest_aircraft_state.current_fuel을 동시 접근 보호 아래 확인·복사한다.
+    3. 최초 확보 전에는 false를 반환하며 출력값을 변경하지 않는다. 초기 0을 실제 수신 연료량으로 사용하지 않는다.
+    4. 확보 후에는 마지막 정상 연료량을 복사하고 true를 반환한다. 이후 잘못된 입력은 정상 저장값을 덮어쓰지 않는다.
+- 기존 aircraft_valid는 마지막 입력의 유효성 상태이므로 정상값 확보 이력을 대신할 수 없다.
+- true는 값의 최신성이나 현재 통신 정상을 보장하지 않는다. 통신 단절은 Communication의 타임아웃 결과로 별도 판단한다.
+- Data Manager는 유한한 숫자이며 0~100 범위인 연료량만 정상값으로 저장해야 한다. NaN/무한대 처리는 구현 확인 대상이다.
+- Comm RX Task의 정상 상태 저장·확보 이력 갱신과 Monitor Task의 조회를 함께 보호한다. 구체적 동기화 방법은 TBD이며 새 Queue는 추가하지 않는다.
+- GetDataStatus()는 그대로 데이터 유효성 조회에 사용하며 COMM_OK/COMM_ERROR 판정에 사용하지 않는다.
+- 본 함수와 확보 이력·동기화는 추가 설계이며 아직 구현 완료로 간주하지 않는다.
+
 ### 4. 데이터 처리 흐름
 
 1. Comm RX Task가 Communication 모듈로부터 `RxMessage_t`를 전달받는다.
@@ -173,7 +195,7 @@
 - RX Queue : 길이 1
 - Queue 전달 데이터 :MissionInput_t
 - Queue Full 시 처리 : 기존 Queue 데이터를 최신 MissionInput_t로 덮어쓴다. Mission Task에는 항상 가장 최근의 정상 데이터를 전달한다.
-- Task 간 공유 자원 : 없음.
+- Task 간 공유 자원: Comm RX Task가 갱신하고 Monitor Task가 GetCurrentFuel()로 조회하는 정상 연료량 및 확보 이력. GetDataStatus()의 다른 Task 조회도 동시 접근 검토 대상이다. 구체적 보호 방식은 TBD다.
 
 ### 6. 오류 처리
 
@@ -183,3 +205,8 @@
 | Destination 유효성 실패 | destination_valid == true인 상태에서 Destination의 latitude, longitude, altitude 중 하나 이상이 정상 범위를 벗어남 | 해당 Destination을 내부 상태에 반영하지 않는다. Aircraft State가 정상이라면 주기 데이터 처리는 계속 수행하되, Destination은 MissionInput_t에 유효한 데이터로 전달하지 않는다. | DESTINATION_FAIL |
 | Mission Command 유효성 실패 | mission_command_valid == true인 상태에서 mission_start_command가 정의된 값 범위를 벗어남 | 해당 Mission Command를 내부 상태에 반영하지 않는다. Aircraft State가 정상이라면 나머지 데이터 처리는 계속 수행한다. | MISSION_COMMAND_FAIL |
 | 정상 데이터 복구 | 이전 Aircraft State 오류 이후 정상 범위의 Aircraft State가 수신됨 | 최신 정상 Aircraft State를 내부 상태에 반영하고 Data Status를 정상 상태로 복구한다. MissionInput_t 생성을 재개한다. | DATA_VALID, AIRCRAFT_SUCCESS|
+### 7. Monitor 연계 추가 흐름
+
+- 유효한 Aircraft State 저장과 함께 정상값 확보 이력을 갱신한다.
+- Monitor Task가 GetCurrentFuel()에 성공하면 System Monitor의 CheckFuelStatus()에 전달한다.
+- 실패 시 연료 판단을 새로 수행하지 않는다. 최초 확보 후에는 기존 정상값을 유지하며 통신 상태는 별도로 계속 갱신한다.

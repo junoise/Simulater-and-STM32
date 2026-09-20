@@ -56,6 +56,8 @@
   - Guidance 계산에 실패한 경우 GUIDANCE_CALCULATE_FAIL을 반환한다.
   - 계산 실패 시 Latest TargetCommand_t를 갱신하지 않고 기존 값을 유지한다.
 
+- 계산 방법:
+  기존 Haversine 거리 계산 및 SLERP Waypoint 생성과 동일한 구면 지구 모델을 유지하기 위해 초기 방위각 공식을 사용한다. 매 Guidance 주기마다 현재 위치에서 활성 Waypoint로 향하는 방위각을 계산하며, 1차 구현에서는 바람과 옆미끄러짐을 무시하여 이를 목표 heading으로 사용한다.
 ---
 
 ### 4. 처리 흐름

@@ -21,9 +21,14 @@
 #include "cmsis_os.h"
 #include "app_types.h"
 #include "data_manager.h"
+#include "waypoint_manager.h"
+#include "guidance.h"
+#include "output_data_manager.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "mission_manager.h"
+#include "FreeRTOS.h"
+#include "queue.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -51,7 +56,7 @@ const osThreadAttr_t CommRxTask_attributes = { .name = "CommRxTask",
 /* Definitions for MissionTask */
 osThreadId_t MissionTaskHandle;
 const osThreadAttr_t MissionTask_attributes = { .name = "MissionTask",
-		.stack_size = 128 * 4, .priority = (osPriority_t) osPriorityHigh, };
+		.stack_size = 512 * 4, .priority = (osPriority_t) osPriorityHigh, };
 /* Definitions for CommTxTask */
 osThreadId_t CommTxTaskHandle;
 const osThreadAttr_t CommTxTask_attributes = { .name = "CommTxTask",
@@ -327,9 +332,9 @@ void StartCommRxTask(void *argument) {
 	RxMessage_t rx_message = { 0 };
 	MissionInput_t mission_input = { 0 };
 
-	rx_message.aircraft_state.current_latitude = 35.0f;
-	rx_message.aircraft_state.current_longitude = 128.0f;
-	rx_message.aircraft_state.current_altitude = 1000.0f;
+	rx_message.aircraft_state.current_latitude = 10.0f;
+	rx_message.aircraft_state.current_longitude = 103.0f;
+	rx_message.aircraft_state.current_altitude = 700.0f;
 	rx_message.aircraft_state.current_heading = 90.0f;
 	rx_message.aircraft_state.current_speed = 200.0f;
 	rx_message.aircraft_state.current_fuel = 80.0f;
@@ -342,12 +347,16 @@ void StartCommRxTask(void *argument) {
 	rx_message.mission_start_command = 1U;
 	rx_message.mission_command_valid = true;
 	for (;;) {
-		if(UpdateData(&rx_message)==UPDATE_SUCCESS){
-			if(CreateMissionInput(&mission_input)==INPUT_SUCCESS){
-				osMessageQueuePut(RxQueueHandle, &mission_input, 0U, 0U);
+		if (UpdateData(&rx_message) == UPDATE_SUCCESS) { //데이터 유효성 검사 및 내부 데이터 업데이트
+			if (CreateMissionInput(&mission_input) == INPUT_SUCCESS) {
+				if (osMessageQueuePut(RxQueueHandle, &mission_input, 0U, 0U)
+						== osOK) {
+					/* Initial destination/start are sent once in this test. */
+					rx_message.destination_valid = false;
+					rx_message.mission_command_valid = false;
+				}
 			}
 		}
-
 
 		osDelay(100U);
 	}
@@ -363,30 +372,68 @@ void StartCommRxTask(void *argument) {
 /* USER CODE END Header_StartMissionTask */
 void StartMissionTask(void *argument) {
 	/* USER CODE BEGIN StartMissionTask */
-	/* Infinite loop */
 
 	MissionInput_t mission_input = { 0 };
-	TxMessage_t tx_message = { 0 };
+	TargetCommand_t target_command = { 0 };
+	MissionState_t current_mission_state = MISSION_STATE_INITIALIZE;
+	MissionProcessResult_t process_result = MISSION_PROCESS_FAIL;
+	WaypointList_t current_waypoint_list = { 0 };
+	TxMessage_t txmessage = { 0 };
+	bool target_available = false;
+
+	/* Temporary test status until Monitor Task supplies real status. */
+	const SystemStatus_t system_status = { .communication_status = COMM_OK,
+			.fuel_status = FUEL_NORMAL };
+
 	for (;;) {
-		if (osMessageQueueGet(RxQueueHandle, &mission_input, NULL,
-				osWaitForever) == osOK) {
-			tx_message.output_data.target_altitude =
+		if (osMessageQueueGet(RxQueueHandle, &mission_input,
+		NULL,
+		osWaitForever) != osOK) {
+			continue;
+		}
+
+		process_result = ProcessMission(&mission_input, &system_status);
+		if (process_result == MISSION_PROCESS_FAIL) {
+			continue;
+		}
+
+		current_mission_state = GetMissionState();
+		target_available = GetTargetCommand(&target_command);
+
+		if (target_available == false) { //만들어진 것이 없을 시 현재 비행기의 고도,속도,방향을 목표값으로 지정
+			target_command.target_altitude =
 					mission_input.aircraft_state.current_altitude;
-			tx_message.output_data.target_heading =
+			target_command.target_heading =
 					mission_input.aircraft_state.current_heading;
-			tx_message.output_data.target_speed =
+			target_command.target_speed =
 					mission_input.aircraft_state.current_speed;
+		}
+		if (UpdateOutputData(current_mission_state, &target_command,
+				GetCurrentWaypointIndex()) == OUTPUT_UPDATE_FAIL) {
+			continue;
+		}
+		if (mission_input.destination_valid) {
+			if (GetWaypointList(&current_waypoint_list)) {
+				if (UpdateWaypointData(&current_waypoint_list)
+						== WAYPOINT_OUTPUT_UPDATE_FAIL) {
+					continue;
+				}
 
-			tx_message.output_data.current_waypoint_index = 0U;
-			tx_message.output_data.mission_state = MISSION_STATE_NAVIGATE;
-			tx_message.output_data.data_status = DATA_VALID;
+			} else {
+				continue;
+			}
 
-			tx_message.waypoint_list_valid = false;
+		}
 
-			osMessageQueuePut(TxQueueHandle, &tx_message, 0U, 0U);
+		if (CreateTxMessage(&txmessage) == TX_MESSAGE_SUCCESS) {
+			if (xQueueOverwrite((QueueHandle_t) TxQueueHandle,
+					&txmessage) != pdPASS) {
+				continue;
+			}
 		}
 
 	}
+
 	/* USER CODE END StartMissionTask */
 }
 

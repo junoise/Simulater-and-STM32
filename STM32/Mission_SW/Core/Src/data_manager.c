@@ -10,6 +10,7 @@ static bool aircraft_valid = false;
 static bool destination_valid = false;
 static bool mission_command_valid = false;
 
+
 AircraftValidationResult_t ValidateAircraftState(
 		const AircraftState_t *aircraftstate) {
 
@@ -158,4 +159,11 @@ MissionInputResult_t CreateMissionInput(MissionInput_t *missioninput) {
 DataStatus_t GetDataStatus(void)
 {
     return data_status;
+}
+bool GetCurrentFuel(float *fuel){
+	if (fuel == NULL || aircraft_valid == false) {
+	        return false;
+	    }
+	*fuel =latest_aircraft_state.current_fuel;
+	return true;
 }
