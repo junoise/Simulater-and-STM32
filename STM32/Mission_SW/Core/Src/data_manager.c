@@ -1,5 +1,8 @@
 #include "data_manager.h"
 #include <stddef.h>
+#include <math.h>
+#include "FreeRTOS.h"
+#include "task.h"
 
 static AircraftState_t latest_aircraft_state = { 0 };
 static Destination_t latest_destination_state = { 0 };
@@ -15,6 +18,14 @@ AircraftValidationResult_t ValidateAircraftState(
 		const AircraftState_t *aircraftstate) {
 
 	if (aircraftstate == NULL) {
+		return AIRCRAFT_FAIL;
+	}
+	if (!isfinite(aircraftstate->current_latitude)
+			|| !isfinite(aircraftstate->current_longitude)
+			|| !isfinite(aircraftstate->current_altitude)
+			|| !isfinite(aircraftstate->current_heading)
+			|| !isfinite(aircraftstate->current_speed)
+			|| !isfinite(aircraftstate->current_fuel)) {
 		return AIRCRAFT_FAIL;
 	}
 
@@ -53,6 +64,11 @@ DestinationValidationResult_t ValidateDestination(
 		const Destination_t *destination) {
 
 	if (destination == NULL) {
+		return DESTINATION_FAIL;
+	}
+	if (!isfinite(destination->destination_latitude)
+			|| !isfinite(destination->destination_longitude)
+			|| !isfinite(destination->destination_altitude)) {
 		return DESTINATION_FAIL;
 	}
 
@@ -103,9 +119,13 @@ DataUpdateResult_t UpdateData(const RxMessage_t *rx_message) {
 
 	/* 항공기 검사 → 상태 갱신 → 유효하면 저장 */
 	aircraft_result = ValidateAircraftState(&rx_message->aircraft_state);
+	taskENTER_CRITICAL();
 	aircraft_valid = (aircraft_result == AIRCRAFT_SUCCESS);
 	if (aircraft_valid) {
 		latest_aircraft_state = rx_message->aircraft_state;
+	}
+	taskEXIT_CRITICAL();
+	if (aircraft_result == AIRCRAFT_SUCCESS) {
 		data_status = DATA_VALID;
 	} else {
 		data_status = DATA_INVALID;
@@ -161,9 +181,14 @@ DataStatus_t GetDataStatus(void)
     return data_status;
 }
 bool GetCurrentFuel(float *fuel){
-	if (fuel == NULL || aircraft_valid == false) {
+	if (fuel == NULL) {
 	        return false;
 	    }
-	*fuel =latest_aircraft_state.current_fuel;
-	return true;
+	taskENTER_CRITICAL();
+	bool valid = aircraft_valid;
+	if (valid) {
+		*fuel = latest_aircraft_state.current_fuel;
+	}
+	taskEXIT_CRITICAL();
+	return valid;
 }
