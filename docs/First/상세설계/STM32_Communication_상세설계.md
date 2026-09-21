@@ -192,3 +192,5 @@
 | 통신 이상 | 정상 패킷 수신 이력 없음 또는 정상 수신 후 COMM_TIMEOUT_MS(TBD) 이상 경과 | GetCommunicationStatus()에서 오류를 반환하고 Monitor Task가 이를 System Monitor에 반영한다. | COMM_ERROR |
 | 통신 정상 복구 | 오류 이후 정상 패킷 수신 확인 | Communication Status를 정상 상태로 복구하고 이후 데이터 처리를 재개한다.| COMM_OK |
 
+
+

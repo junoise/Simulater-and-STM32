@@ -17,7 +17,8 @@ typedef enum
 typedef enum
 {
     PARSE_SUCCESS = 0,
-    PARSE_FAIL
+    PARSE_FAIL,
+	PARSE_WAIT
 } ParseResult_t;
 
 typedef enum
@@ -71,9 +72,9 @@ typedef enum
 
 typedef enum
 {
-	DATA_VALID   = 0,
-	DATA_INVALID = 1,
-	DATA_UNKNOWN = 2
+	DATA_UNKNOWN = 0,
+	DATA_VALID   = 1,
+	DATA_INVALID = 2
 
 } DataStatus_t;
 
