@@ -1,10 +1,20 @@
 #include "communication.h"
 #include <stddef.h>
+#include "main.h"
+#include "FreeRTOS.h"
+#include "task.h"
+extern UART_HandleTypeDef huart2;
+
+static uint8_t uart_rx_byte = 0U;
+static TaskHandle_t rx_task_handle = NULL;
 
 #define RX_BUFFER_SIZE 256U
 static uint8_t rx_buffer[RX_BUFFER_SIZE];
 static volatile uint16_t rx_write_index = 0U;
 static volatile uint16_t rx_read_index = 0U;  //원형 버퍼 설정.
+
+static volatile bool rx_buffer_overflow = false;
+static volatile bool rx_rearm_failed = false;
 
 static uint8_t header_buffer[3] = { 0U };
 static uint8_t payload_buffer[24] = { 0U };
@@ -38,6 +48,34 @@ static bool PushRxByte(uint8_t data) //버퍼함수
 
 	return true;
 }
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+    BaseType_t higher_priority_task_woken = pdFALSE;
+
+    if (huart->Instance != USART2) {
+        return;
+    }
+
+    /* 1. 받은 바이트를 원형 버퍼에 저장 */
+    if (PushRxByte(uart_rx_byte) == false) {
+        rx_buffer_overflow = true;
+    }
+
+    /* 2. 다음 한 바이트 수신 준비 */
+    if (HAL_UART_Receive_IT(huart, &uart_rx_byte, 1U) != HAL_OK) {
+        rx_rearm_failed = true;
+    }
+
+    /* 3. Comm RX Task에 데이터 또는 오류 발생 알림 */
+    if (rx_task_handle != NULL) {
+        vTaskNotifyGiveFromISR(
+                rx_task_handle,
+                &higher_priority_task_woken);
+    }
+
+    /* 필요하면 인터럽트 종료 직후 깨어난 Task 실행 */
+    portYIELD_FROM_ISR(higher_priority_task_woken);
+}
 static bool PopRxByte(uint8_t *data) //버퍼함수
 {
 	if (data == NULL) {
@@ -48,8 +86,8 @@ static bool PopRxByte(uint8_t *data) //버퍼함수
 		return false; //버퍼가 비어있음
 	}
 
-	data = rx_buffer[rx_read_index];
-	rx_read_index = (uint16_t) ((rx_write_index + 1U) % RX_BUFFER_SIZE);
+	*data = rx_buffer[rx_read_index];
+	rx_read_index = (uint16_t)((rx_read_index + 1U) % RX_BUFFER_SIZE);
 
 	return true;
 }
@@ -185,5 +223,108 @@ static void CheckRxTimeout(void)
     if (elapsed >= RX_PACKET_TIMEOUT_MS) {
         ResetRxPacket();
         rx_packet_error = true;
+    }
+}
+static void RecoverRx(void)
+{
+    HAL_StatusTypeDef abort_result;
+    HAL_StatusTypeDef start_result = HAL_ERROR;
+
+    /* 인터럽트가 버퍼를 갱신하지 못하도록 잠시 보호 */
+    taskENTER_CRITICAL();
+
+    abort_result = HAL_UART_AbortReceive(&huart2);
+
+    /* 손상 가능성이 있는 수신 데이터 폐기 */
+    rx_read_index = 0U;
+    rx_write_index = 0U;
+
+    ResetRxPacket();
+    rx_packet_ready = false;
+    rx_packet_error = false;
+    rx_buffer_overflow = false;
+
+    if (abort_result == HAL_OK) {
+        start_result =
+                HAL_UART_Receive_IT(&huart2, &uart_rx_byte, 1U);
+    }
+
+    rx_rearm_failed = (start_result != HAL_OK);
+
+    taskEXIT_CRITICAL();
+}
+RxResult_t StartReceive(void)
+{
+
+    rx_task_handle = xTaskGetCurrentTaskHandle();
+
+    if (HAL_UART_Receive_IT(&huart2, &uart_rx_byte, 1U) != HAL_OK) {
+        return RX_FAIL;
+    }
+
+    return RX_SUCCESS;
+}
+RxResult_t Receive(void)
+{
+    uint8_t data;
+
+    for (;;) {
+        /* 1. 수신 오류 복구 */
+        if (rx_buffer_overflow || rx_rearm_failed) {
+            RecoverRx();
+
+            /* 복구 실패 시 반복 호출로 CPU를 점유하지 않도록 대기 */
+            if (rx_rearm_failed) {
+                vTaskDelay(1U);
+            }
+
+            return RX_FAIL;
+        }
+
+        /* 2. 패킷 수신 제한시간 확인 */
+        CheckRxTimeout();
+
+        if (rx_packet_error) {
+            ResetRxPacket();
+            rx_packet_error = false;
+            return RX_FAIL;
+        }
+
+        /* Parse()가 읽을 버퍼와 길이는 보존 */
+        if (rx_packet_ready) {
+            return RX_SUCCESS;
+        }
+
+        /* 3. 바이트 하나 처리 후 처음부터 결과 확인 */
+        if (PopRxByte(&data)) {
+            ProcessRxByte(data);
+            continue;
+        }
+
+        /* 4. 버퍼가 비었으므로 알림 대기 */
+        TickType_t wait_ticks = portMAX_DELAY;
+
+        if (rx_status != WAIT_AA) {
+            uint32_t elapsed =
+                    (uint32_t)(HAL_GetTick() - receive_time);
+
+            if (elapsed >= RX_PACKET_TIMEOUT_MS) {
+                continue; /* 위의 CheckRxTimeout()에서 처리 */
+            }
+
+            uint32_t remaining_ms =
+                    RX_PACKET_TIMEOUT_MS - elapsed;
+
+            /* ms를 RTOS tick으로 변환하고 올림 처리 */
+            wait_ticks = (TickType_t)(
+                    ((uint64_t)remaining_ms * configTICK_RATE_HZ
+                     + 999U) / 1000U);
+        }
+
+        /*
+         * 알림이 오거나 제한시간이 지나면 다시 검사.
+         * 알림 개수와 관계없이 실제 데이터는 원형 버퍼에서 읽음.
+         */
+        (void)ulTaskNotifyTake(pdTRUE, wait_ticks);
     }
 }
