@@ -12,9 +12,7 @@ public class LandingTelemetryUI : MonoBehaviour
     private void Start()
     {
         if (landing != null)
-        {
             groundStart = landing.GetComponent<CesiumGroundStart>();
-        }
     }
 
     private string ContactText(bool grounded)
@@ -25,14 +23,10 @@ public class LandingTelemetryUI : MonoBehaviour
     private string ResultText()
     {
         if (landing.BodyCollision)
-        {
             return "FAILED: BODY COLLISION";
-        }
 
         if (landing.OffRunway)
-        {
             return "FAILED: OFF RUNWAY";
-        }
 
         if (landing.TouchdownCount == 0)
         {
@@ -46,9 +40,7 @@ public class LandingTelemetryUI : MonoBehaviour
             : "NORMAL TOUCHDOWN";
 
         if (landing.NoseFirst)
-        {
             result += " / NOSE FIRST";
-        }
 
         return result;
     }
@@ -56,9 +48,7 @@ public class LandingTelemetryUI : MonoBehaviour
     private void Update()
     {
         if (landing == null || flight == null || landingText == null)
-        {
             return;
-        }
 
         if (groundStart != null &&
             groundStart.enabled &&
@@ -80,9 +70,26 @@ public class LandingTelemetryUI : MonoBehaviour
             return;
         }
 
-        string height = landing.HasGroundReading
-            ? $"{landing.SensorHeight:F1} m"
-            : "N/A";
+        string height;
+
+        if (landing.HasGroundReading &&
+            landing.GroundReadingAge <=
+                Mathf.Max(0.05f, Time.fixedDeltaTime * 2f))
+        {
+            height = $"{landing.SensorHeight:F1} m [LIVE]";
+        }
+        else if (landing.TryGetAutopilotHeight(
+                     out float estimate,
+                     out bool held))
+        {
+            height =
+                $"~{estimate:F1} m " +
+                $"[HELD {landing.GroundReadingAge:F2}s]";
+        }
+        else
+        {
+            height = "N/A [GROUND SENSOR LOST]";
+        }
 
         string sinkRate = landing.TouchdownCount > 0
             ? $"{landing.WorstTouchdownSinkRate:F2} m/s"
