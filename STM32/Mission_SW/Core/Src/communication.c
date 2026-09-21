@@ -43,6 +43,9 @@ static uint8_t tx_waypoint_packet[68];
 static uint8_t tx_output_packet[22];
 static bool tx_packet_ready = false;
 static bool tx_waypoint_pending = false; //rx 오류처리
+/* TX Task only: distinguish queued copies from genuinely new lists. */
+static uint64_t tx_waypoint_version = 0U;
+static uint64_t transmitted_waypoint_version = 0U;
 
 static uint8_t header_buffer[3] = { 0U };
 static uint8_t payload_buffer[24] = { 0U };
@@ -514,11 +517,13 @@ PacketResult_t CreateTxPacket(const TxMessage_t *txmessage)
         return PACKET_FAIL;
     }
     if (txmessage->waypoint_list_valid &&
-        txmessage->waypoint_list.waypoint_count != WAYPOINT_COUNT_ON_WIRE) {
+        (txmessage->waypoint_list.waypoint_count != WAYPOINT_COUNT_ON_WIRE ||
+         txmessage->waypoint_version == 0U)) {
         return PACKET_FAIL;
     }
 
-    if (txmessage->waypoint_list_valid) {
+    if (txmessage->waypoint_list_valid &&
+        txmessage->waypoint_version != transmitted_waypoint_version) {
         BeginTxPacket(tx_waypoint_packet, 0x03U, WAYPOINT_PAYLOAD_SIZE);
         tx_waypoint_packet[5] = WAYPOINT_COUNT_ON_WIRE;
         for (uint8_t i = 0U; i < WAYPOINT_COUNT_ON_WIRE; ++i) {
@@ -529,6 +534,7 @@ PacketResult_t CreateTxPacket(const TxMessage_t *txmessage)
             WriteFloatLE(&tx_waypoint_packet[offset + 8U], wp->altitude);
         }
         FinishTxPacket(tx_waypoint_packet, WAYPOINT_PAYLOAD_SIZE);
+        tx_waypoint_version = txmessage->waypoint_version;
         tx_waypoint_pending = true;
     }
 
@@ -555,6 +561,8 @@ TransmitResult_t Transmit(void)
                               sizeof(tx_waypoint_packet), TX_TIMEOUT_MS) != HAL_OK) {
             return TRANSMIT_FAIL;
         }
+        /* 0x03 completion is independent of the following 0x04 result. */
+        transmitted_waypoint_version = tx_waypoint_version;
         tx_waypoint_pending = false;
     }
     if (HAL_UART_Transmit(&huart2, tx_output_packet,
@@ -563,4 +571,9 @@ TransmitResult_t Transmit(void)
     }
     tx_packet_ready = false;
     return TRANSMIT_SUCCESS;
+}
+
+uint64_t GetTransmittedWaypointVersion(void)
+{
+    return transmitted_waypoint_version;
 }

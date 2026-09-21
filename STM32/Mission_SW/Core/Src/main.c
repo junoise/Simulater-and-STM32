@@ -464,17 +464,22 @@ void StartCommTxTask(void *argument)
   /* USER CODE BEGIN StartCommTxTask */
 	/* Infinite loop */
 	TxMessage_t tx_message = { 0 };
+	bool retry_pending = false;
 	for (;;) {
 		if (osMessageQueueGet(TxQueueHandle, &tx_message,
-		NULL, osWaitForever) != osOK) {
+		NULL, retry_pending ? 0U : osWaitForever) == osOK) {
+			/* Prefer the newest queued output/route over a failed older packet. */
+			retry_pending = (CreateTxPacket(&tx_message) == PACKET_SUCCESS);
+		}
+		if (!retry_pending) {
 			continue;
 		}
-		if (CreateTxPacket(&tx_message) != PACKET_SUCCESS) {
-			continue;
-		}
-		if (Transmit() != TRANSMIT_SUCCESS) {
-			/* Keep latest-output policy; do not loop forever on stale data. */
-			vTaskDelay(1U);
+		retry_pending = (Transmit() != TRANSMIT_SUCCESS);
+		/* Also acknowledge 0x03 success when the subsequent 0x04 failed. */
+		ConfirmWaypointTransmitted(GetTransmittedWaypointVersion());
+		if (retry_pending) {
+			/* Retry even without a new message, with bounded CPU usage. */
+			vTaskDelay(pdMS_TO_TICKS(10U));
 		}
 	}
   /* USER CODE END StartCommTxTask */

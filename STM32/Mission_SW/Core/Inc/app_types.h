@@ -256,6 +256,7 @@ typedef struct
 	OutputData_t output_data;
 	WaypointList_t waypoint_list;
 	bool waypoint_list_valid;
+	uint64_t waypoint_version;
 
 }TxMessage_t;
 

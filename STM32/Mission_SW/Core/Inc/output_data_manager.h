@@ -12,4 +12,6 @@ WaypointOutputUpdateResult_t UpdateWaypointData(const WaypointList_t *waypointli
 
 //3.3
 TxMessageResult_t CreateTxMessage(TxMessage_t *txmessage);
+/* TX Task acknowledges only a successfully transmitted 0x03 version. */
+void ConfirmWaypointTransmitted(uint64_t version);
 #endif
