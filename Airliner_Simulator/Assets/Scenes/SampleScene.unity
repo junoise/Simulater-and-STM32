@@ -12374,7 +12374,7 @@ MonoBehaviour:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 2007303295}
-  m_Enabled: 1
+  m_Enabled: 0
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: c8a4247f5b230b046b66ef31c82bd395, type: 3}
   m_Name: 
@@ -12460,10 +12460,12 @@ MonoBehaviour:
   dtrEnable: 0
   showPanel: 1
   status: DISCONNECTED
+  missionNumber: 0
   acceptedWaypointPackets: 0
   acceptedOutputPackets: 0
   rejectedPayloads: 0
   stalePackets: 0
+  ignoredPackets: 0
 --- !u!1 &2016866697
 GameObject:
   m_ObjectHideFlags: 0

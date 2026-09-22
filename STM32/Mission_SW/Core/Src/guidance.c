@@ -15,6 +15,6 @@ GuidanceResult_t CalculateGuidance(const AircraftState_t *aircraft_state,
 		return GUIDANCE_CALCULATE_FAIL;
 	}
 	target_command->target_altitude = waypoint->altitude;
-	target_command->target_speed = 200.0f; //임시 순항값.
+	target_command->target_speed = 100.0f; //임시 순항값.
 	return GUIDANCE_CALCULATE_SUCCESS;
 }

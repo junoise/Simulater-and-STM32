@@ -27,9 +27,11 @@ public class MissionInterface : MonoBehaviour
     public event Action<UnityAircraftState> AircraftStateProduced;
     public event Action<UnityMissionRequest> MissionStartProduced;
 
-    // 실제 통신 컴포넌트가 연결 상태 확인 함수를 등록
-    // 모의 임무 모드에서는 null을 유지
     public Func<bool> ExternalPeerReady { get; set; }
+
+    public Func<UnityMissionRequest, string>
+        ExternalMissionStartCheck
+    { get; set; }
 
     private AircraftAutopilot autopilot;
     private Rigidbody rb;
@@ -67,13 +69,11 @@ public class MissionInterface : MonoBehaviour
         }
 
         var geo = autopilot.georeference;
-
         Vector3 position = geo.transform.InverseTransformPoint(rb.position);
 
         double3 ecef =
             geo.TransformUnityPositionToEarthCenteredEarthFixed(
-                new double3(position.x, position.y, position.z)
-            );
+                new double3(position.x, position.y, position.z));
 
         double3 llh =
             geo.ellipsoid.CenteredFixedToLongitudeLatitudeHeight(ecef);
@@ -190,11 +190,7 @@ public class MissionInterface : MonoBehaviour
             return false;
         }
 
-        ClearMission();
-
-        MissionRequested = true;
-
-        LastMissionRequest = new UnityMissionRequest
+        UnityMissionRequest request = new UnityMissionRequest
         {
             destination_latitude = latitude,
             destination_longitude = longitude,
@@ -202,7 +198,23 @@ public class MissionInterface : MonoBehaviour
             mission_start_command = 1
         };
 
-        MissionStartProduced.Invoke(LastMissionRequest);
+        if (ExternalMissionStartCheck != null)
+        {
+            string rejection = ExternalMissionStartCheck(request);
+
+            if (!string.IsNullOrEmpty(rejection))
+            {
+                message = rejection;
+                return false;
+            }
+        }
+
+        ClearMission();
+
+        MissionRequested = true;
+        LastMissionRequest = request;
+
+        MissionStartProduced.Invoke(request);
 
         if (!MissionRequested)
         {
@@ -213,7 +225,7 @@ public class MissionInterface : MonoBehaviour
             return false;
         }
 
-        message = "Mission request queued. Wait for NAVIGATE, then AP ON.";
+        message = "Mission queued. Wait for new route and NAVIGATE.";
         return true;
     }
 

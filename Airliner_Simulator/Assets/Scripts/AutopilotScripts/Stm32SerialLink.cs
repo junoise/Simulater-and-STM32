@@ -12,8 +12,6 @@ public class Stm32SerialLink : MonoBehaviour
     [Header("USB Serial")]
     public string portName = "COM3";
     public bool connectOnStart = false;
-
-    [Tooltip("보드의 USB 시리얼 구현에서 요구할 때만 활성화")]
     public bool dtrEnable = false;
 
     [Header("Test Panel")]
@@ -21,10 +19,24 @@ public class Stm32SerialLink : MonoBehaviour
 
     [Header("Runtime")]
     [SerializeField] private string status = "DISCONNECTED";
+    [SerializeField] private int missionNumber;
     [SerializeField] private int acceptedWaypointPackets;
     [SerializeField] private int acceptedOutputPackets;
     [SerializeField] private int rejectedPayloads;
     [SerializeField] private int stalePackets;
+    [SerializeField] private int ignoredPackets;
+
+    private enum MissionPhase
+    {
+        Idle,
+        WaitingRoute,
+        WaitingNavigate,
+        Active,
+        Complete,
+        Failed
+    }
+
+    private MissionPhase phase = MissionPhase.Idle;
 
     private MissionInterface interfaceLink;
     private MockMissionComputer mock;
@@ -35,14 +47,32 @@ public class Stm32SerialLink : MonoBehaviour
 
     private string[] ports = Array.Empty<string>();
 
+    private UnityMissionRequest requestedDestination;
+    private double requestStarted;
+    private double lastValidOutput = double.NegativeInfinity;
+    private byte lastWaypointIndex;
+
     private const double CurrentIntervalSeconds = 0.05;
     private const double SnapshotMaximumAge = 0.2;
     private const double ReceiveMaximumAge = 0.5;
+    private const double MissionSetupTimeout = 8.0;
+
+    private const double MinimumNewDestinationDistance = 100.0;
+    private const double EndpointDistanceTolerance = 10.0;
+    private const float EndpointAltitudeTolerance = 1f;
+
+    private sealed class StartJob
+    {
+        public byte[] Frame;
+        public int Generation;
+    }
 
     private sealed class Received
     {
         public MissionSerialProtocol.Packet Packet;
         public double Time;
+
+        public int Generation;
     }
 
     private sealed class Session
@@ -56,14 +86,12 @@ public class Stm32SerialLink : MonoBehaviour
 
         public volatile bool Stop;
         public volatile bool Connected;
-        public volatile bool MissionSent;
         public volatile string Failure;
+        public volatile int SentGeneration;
 
         public byte[] LatestCurrent;
         public double LatestCurrentTime;
-        public byte[] PendingDestination;
-
-        public bool MissionSubmitted;
+        public StartJob PendingStart;
 
         public int TxCurrent;
         public int TxDestination;
@@ -111,11 +139,8 @@ public class Stm32SerialLink : MonoBehaviour
             ports = SerialPort.GetPortNames();
             Array.Sort(ports, StringComparer.OrdinalIgnoreCase);
 
-            if (ports.Length > 0 &&
-                Array.IndexOf(ports, portName) < 0)
-            {
+            if (ports.Length > 0 && Array.IndexOf(ports, portName) < 0)
                 portName = ports[0];
-            }
 
             if (ports.Length == 0)
                 status = "No COM ports found.";
@@ -134,7 +159,7 @@ public class Stm32SerialLink : MonoBehaviour
 
         if (WorkerAlive)
         {
-            status = "Already connected or closing. Wait briefly.";
+            status = "Already connected or closing.";
             return;
         }
 
@@ -152,17 +177,23 @@ public class Stm32SerialLink : MonoBehaviour
 
         interfaceLink.ClearMission();
 
+        missionNumber = 0;
         acceptedWaypointPackets = 0;
         acceptedOutputPackets = 0;
         rejectedPayloads = 0;
         stalePackets = 0;
+        ignoredPackets = 0;
 
+        phase = MissionPhase.Idle;
+        requestedDestination = default;
+        lastValidOutput = double.NegativeInfinity;
         faultHandled = false;
 
         Session created = new Session();
         session = created;
 
         interfaceLink.ExternalPeerReady = () => IsConnected;
+        interfaceLink.ExternalMissionStartCheck = CheckMissionStart;
 
         string selectedPort = portName.Trim();
         bool selectedDtr = dtrEnable;
@@ -209,13 +240,49 @@ public class Stm32SerialLink : MonoBehaviour
         {
             interfaceLink.ClearMission("Board disconnected.");
             interfaceLink.ExternalPeerReady = null;
+            interfaceLink.ExternalMissionStartCheck = null;
         }
 
-        // 포트 자체는 통신 스레드에서 닫음
         if (closing?.Thread != null && closing.Thread.IsAlive)
             closing.Thread.Join(500);
 
+        phase = MissionPhase.Idle;
         status = WorkerAlive ? "CLOSING..." : "DISCONNECTED";
+    }
+
+    private string CheckMissionStart(UnityMissionRequest request)
+    {
+        if (!IsConnected || !subscribed)
+            return "Connect the board first.";
+
+        if (Time.timeScale <= 0f)
+            return "Resume the simulation before starting a mission.";
+
+        if (phase != MissionPhase.Idle &&
+            phase != MissionPhase.Complete)
+        {
+            return "Wait for MISSION COMPLETE before a new mission.";
+        }
+
+        if (phase == MissionPhase.Complete)
+        {
+            if (Now - lastValidOutput > 1.0)
+                return "Waiting for a fresh COMPLETE response.";
+
+            double separation = MissionInterfaceRules.DistanceMeters(
+                requestedDestination.destination_latitude,
+                requestedDestination.destination_longitude,
+                request.destination_latitude,
+                request.destination_longitude);
+
+            if (separation < MinimumNewDestinationDistance)
+            {
+                return "Choose a new destination at least 100 m away. " +
+                       "Use USE AHEAD.";
+            }
+        }
+
+        return "";
     }
 
     private void OnMissionStart(UnityMissionRequest request)
@@ -228,42 +295,220 @@ public class Stm32SerialLink : MonoBehaviour
             return;
         }
 
-        bool duplicate;
+        missionNumber++;
+        requestedDestination = request;
+
+        phase = MissionPhase.WaitingRoute;
+        requestStarted = Now;
+        lastValidOutput = double.NegativeInfinity;
+        lastWaypointIndex = 0;
+
+        acceptedWaypointPackets = 0;
+        acceptedOutputPackets = 0;
 
         lock (current.Gate)
         {
-            duplicate = current.MissionSubmitted;
-
-            if (!duplicate)
+            current.PendingStart = new StartJob
             {
-                current.MissionSubmitted = true;
+                Frame = MissionSerialProtocol.EncodeDestination(request),
+                Generation = missionNumber
+            };
 
-                current.PendingDestination =
-                    MissionSerialProtocol.EncodeDestination(request);
+            current.LatestCurrent =
+                MissionSerialProtocol.EncodeCurrent(
+                    interfaceLink.CurrentState);
 
-                current.LatestCurrent =
-                    MissionSerialProtocol.EncodeCurrent(
-                        interfaceLink.CurrentState);
+            current.LatestCurrentTime = Now;
+        }
 
-                current.LatestCurrentTime = Now;
+        status = $"MISSION {missionNumber}: waiting for new route.";
+    }
+
+    private bool RouteMatchesRequest(MissionWaypoint[] route)
+    {
+        if (route == null || route.Length != 5)
+            return false;
+
+        MissionWaypoint last = route[4];
+
+        double distance = MissionInterfaceRules.DistanceMeters(
+            last.waypoint_latitude,
+            last.waypoint_longitude,
+            requestedDestination.destination_latitude,
+            requestedDestination.destination_longitude);
+
+        float altitudeDifference = Mathf.Abs(
+            last.waypoint_altitude -
+            requestedDestination.destination_altitude);
+
+        return distance <= EndpointDistanceTolerance &&
+               altitudeDifference <= EndpointAltitudeTolerance;
+    }
+
+    private void FailConnection(string reason)
+    {
+        Disconnect();
+        phase = MissionPhase.Failed;
+        status = reason;
+
+        interfaceLink.ClearMission(reason);
+        Debug.LogWarning("Stm32SerialLink: " + reason, this);
+    }
+
+    private void HandlePacket(Received received)
+    {
+        var packet = received.Packet;
+
+        if (packet.Type == MissionSerialProtocol.WaypointType)
+        {
+            if (!MissionSerialProtocol.TryDecodeWaypoints(
+                    packet.Payload,
+                    out MissionWaypoint[] route))
+            {
+                rejectedPayloads++;
+                return;
             }
+
+            if (phase != MissionPhase.WaitingRoute)
+            {
+                ignoredPackets++;
+                return;
+            }
+
+            if (!RouteMatchesRequest(route))
+            {
+                rejectedPayloads++;
+                status = "Ignored route: final destination does not match.";
+                return;
+            }
+
+            interfaceLink.ReceiveWaypointList(route);
+            acceptedWaypointPackets++;
+
+            phase = MissionPhase.WaitingNavigate;
+            status = "New route received. Waiting for NAVIGATE / VALID.";
+            return;
         }
 
-        if (duplicate)
+        if (packet.Type != MissionSerialProtocol.OutputType)
+            return;
+
+        if (!MissionSerialProtocol.TryDecodeOutput(
+                packet.Payload,
+                out MissionCommand command))
         {
-            // 현재 프로토콜에는 mission ID와 시작 명령 ACK가 없음
-            // 초기 연결 시험에서는 한 연결당 한 임무만 허용
-            Disconnect();
-
-            status = "Reset board and reconnect before a new mission.";
-
-            interfaceLink.ClearMission(
-                "Reset board and reconnect before a new mission.");
+            rejectedPayloads++;
+            return;
         }
-        else
+
+        bool valid =
+            command.data_status == (byte)DataStatusCode.VALID;
+
+        bool navigate =
+            command.mission_state == (byte)MissionStateCode.NAVIGATE;
+
+        bool complete =
+            command.mission_state == (byte)MissionStateCode.MISSION_COMPLETE;
+
+        if (phase == MissionPhase.WaitingRoute)
         {
-            status = "MISSION QUEUED: waiting for board response.";
+        
+            ignoredPackets++;
+            return;
         }
+
+        if (phase == MissionPhase.WaitingNavigate)
+        {
+            if (!navigate || !valid || command.current_waypoint_index != 0)
+            {
+                ignoredPackets++;
+                return;
+            }
+
+            interfaceLink.ReceiveCommand(command);
+
+            if (!interfaceLink.TryGetGuidance(out _, out _))
+                return;
+
+            phase = MissionPhase.Active;
+            lastWaypointIndex = 0;
+            lastValidOutput = Now;
+            acceptedOutputPackets++;
+
+            status = $"MISSION {missionNumber}: READY. AP ON is available.";
+            return;
+        }
+
+        if (phase != MissionPhase.Active &&
+            phase != MissionPhase.Complete)
+        {
+            ignoredPackets++;
+            return;
+        }
+
+        if (command.mission_state == (byte)MissionStateCode.INITIALIZE)
+        {
+            FailConnection(
+                "Unexpected INITIALIZE. Check/reset board before reconnecting.");
+            return;
+        }
+
+        if (phase == MissionPhase.Complete)
+        {
+            if (!complete || command.current_waypoint_index != 4)
+            {
+                ignoredPackets++;
+                return;
+            }
+
+            interfaceLink.ReceiveCommand(command);
+            acceptedOutputPackets++;
+
+            if (valid)
+                lastValidOutput = Now;
+
+            return;
+        }
+
+        if (navigate)
+        {
+            if (command.current_waypoint_index < lastWaypointIndex)
+            {
+                ignoredPackets++;
+                return;
+            }
+
+            interfaceLink.ReceiveCommand(command);
+            acceptedOutputPackets++;
+
+            if (valid)
+            {
+                lastWaypointIndex = command.current_waypoint_index;
+                lastValidOutput = Now;
+            }
+
+            return;
+        }
+
+        if (complete && command.current_waypoint_index == 4)
+        {
+            interfaceLink.ReceiveCommand(command);
+            acceptedOutputPackets++;
+
+            if (valid && interfaceLink.TryGetGuidance(out _, out _))
+            {
+                phase = MissionPhase.Complete;
+                lastValidOutput = Now;
+
+                status =
+                    $"MISSION {missionNumber}: COMPLETE. " +
+                    "AP OFF -> USE AHEAD -> MISSION START.";
+            }
+
+            return;
+        }
+
+        ignoredPackets++;
     }
 
     private void Update()
@@ -280,11 +525,7 @@ public class Stm32SerialLink : MonoBehaviour
         {
             string failure = current.Failure;
             faultHandled = true;
-
-            Disconnect();
-
-            status = "SERIAL ERROR: " + failure;
-            Debug.LogError("Stm32SerialLink: " + failure, this);
+            FailConnection("SERIAL ERROR: " + failure);
             return;
         }
 
@@ -301,11 +542,9 @@ public class Stm32SerialLink : MonoBehaviour
         if (!subscribed)
         {
             Subscribe();
-            status = "PORT OPEN: waiting for STM32 packets.";
+            status = "PORT OPEN: ready for first mission.";
         }
 
-        // Unity API는 메인 스레드에서만 읽음
-        // 통신 스레드는 이 상태의 바이너리 복사본만 사용
         if (interfaceLink.HasAircraftState && Time.timeScale > 0f)
         {
             byte[] snapshot =
@@ -335,42 +574,28 @@ public class Stm32SerialLink : MonoBehaviour
                 continue;
             }
 
-            if (!current.MissionSent || !interfaceLink.MissionRequested)
+            if (missionNumber == 0 ||
+                received.Generation != missionNumber ||
+                current.SentGeneration != missionNumber ||
+                !interfaceLink.MissionRequested)
+            {
+                ignoredPackets++;
                 continue;
-
-            var packet = received.Packet;
-
-            if (packet.Type == MissionSerialProtocol.WaypointType)
-            {
-                if (MissionSerialProtocol.TryDecodeWaypoints(
-                        packet.Payload,
-                        out MissionWaypoint[] route))
-                {
-                    interfaceLink.ReceiveWaypointList(route);
-                    acceptedWaypointPackets++;
-                    status = "Received 5 waypoints.";
-                }
-                else
-                {
-                    rejectedPayloads++;
-                    status = "Rejected waypoint payload.";
-                }
             }
-            else if (packet.Type == MissionSerialProtocol.OutputType)
-            {
-                if (MissionSerialProtocol.TryDecodeOutput(
-                        packet.Payload,
-                        out MissionCommand command))
-                {
-                    interfaceLink.ReceiveCommand(command);
-                    acceptedOutputPackets++;
-                }
-                else
-                {
-                    rejectedPayloads++;
-                    status = "Rejected output payload.";
-                }
-            }
+
+            HandlePacket(received);
+
+            if (!IsConnected)
+                return;
+        }
+
+        if ((phase == MissionPhase.WaitingRoute ||
+             phase == MissionPhase.WaitingNavigate) &&
+            Now - requestStarted > MissionSetupTimeout)
+        {
+            FailConnection(
+                "Mission setup timeout. No automatic retry. " +
+                "Check/reset board before reconnecting.");
         }
     }
 
@@ -399,42 +624,38 @@ public class Stm32SerialLink : MonoBehaviour
 
                 current.Connected = true;
 
-                MissionSerialProtocol.Parser parser =
-                    new MissionSerialProtocol.Parser();
+                var parser = new MissionSerialProtocol.Parser();
 
                 byte[] readBuffer = new byte[4096];
                 double nextCurrentTime = Now;
+                int receiveGeneration = 0;
 
                 while (!current.Stop)
                 {
                     double now = Now;
 
                     byte[] statePacket;
-                    byte[] destinationPacket;
                     double stateTime;
+                    StartJob job;
 
                     lock (current.Gate)
                     {
                         statePacket = current.LatestCurrent;
                         stateTime = current.LatestCurrentTime;
 
-                        // 유효한 현재 상태가 있을 때 목적지 다음에
-                        // Current 패킷을 바로 보냄
                         bool stateFresh =
                             statePacket != null &&
                             now - stateTime <= SnapshotMaximumAge;
 
-                        destinationPacket = stateFresh
-                            ? current.PendingDestination
-                            : null;
+                        job = stateFresh ? current.PendingStart : null;
 
-                        if (destinationPacket != null)
-                            current.PendingDestination = null;
+                        if (job != null)
+                            current.PendingStart = null;
                     }
 
-                    if (destinationPacket != null)
+                    if (job != null)
                     {
-                        // 임무 시작 전 도착한 응답은 제거
+                  
                         port.DiscardInBuffer();
                         parser.Clear();
 
@@ -442,15 +663,15 @@ public class Stm32SerialLink : MonoBehaviour
                         {
                         }
 
-                        port.Write(
-                            destinationPacket, 0, destinationPacket.Length);
-
+                        port.Write(job.Frame, 0, job.Frame.Length);
                         Interlocked.Increment(ref current.TxDestination);
 
                         port.Write(statePacket, 0, statePacket.Length);
                         Interlocked.Increment(ref current.TxCurrent);
 
-                        current.MissionSent = true;
+                        receiveGeneration = job.Generation;
+                        current.SentGeneration = job.Generation;
+
                         nextCurrentTime = Now + CurrentIntervalSeconds;
                     }
                     else if (now >= nextCurrentTime)
@@ -490,7 +711,8 @@ public class Stm32SerialLink : MonoBehaviour
                             current.Incoming.Enqueue(new Received
                             {
                                 Packet = packet,
-                                Time = receivedAt
+                                Time = receivedAt,
+                                Generation = receiveGeneration
                             });
                         }
                     }
@@ -500,7 +722,6 @@ public class Stm32SerialLink : MonoBehaviour
                     }
 
                     current.ParserErrors = parser.Errors;
-
                     Thread.Sleep(2);
                 }
             }
@@ -527,10 +748,7 @@ public class Stm32SerialLink : MonoBehaviour
             MissionSerialProtocol.RunSelfTest();
             status = "PROTOCOL SELF TEST: PASS";
 
-            Debug.Log(
-                "Protocol self-test PASS: CRC, encoding, decoding, " +
-                "fragmentation, joined packets, CRC recovery and timeout.",
-                this);
+            Debug.Log("Protocol self-test PASS.", this);
         }
         catch (Exception exception)
         {
@@ -544,10 +762,10 @@ public class Stm32SerialLink : MonoBehaviour
         if (!showPanel)
             return;
 
-        float width = Mathf.Min(500f, Screen.width - 20f);
+        float width = Mathf.Min(540f, Screen.width - 20f);
 
         GUILayout.BeginArea(
-            new Rect((Screen.width - width) * 0.5f, 10f, width, 275f),
+            new Rect((Screen.width - width) * 0.5f, 10f, width, 330f),
             GUI.skin.box);
 
         GUILayout.Label("STM32 USB SERIAL / F8: SHOW OR HIDE");
@@ -585,11 +803,11 @@ public class Stm32SerialLink : MonoBehaviour
 
         GUILayout.EndHorizontal();
 
-        GUILayout.Label(MockActive
-            ? "MODE: LOCAL MOCK"
-            : "MODE: BOARD");
-
+        GUILayout.Label(MockActive ? "MODE: LOCAL MOCK" : "MODE: BOARD");
         GUILayout.Label("COM: " + (IsConnected ? "OPEN" : "CLOSED"));
+
+        GUILayout.Label(
+            $"Mission attempt: {missionNumber} / Phase: {phase}");
 
         Session current = session;
 
@@ -604,17 +822,18 @@ public class Stm32SerialLink : MonoBehaviour
                 $"CRC-valid packets: {current.RxPackets}");
 
             GUILayout.Label(
-                $"WP: {acceptedWaypointPackets} / " +
+                $"This mission WP: {acceptedWaypointPackets} / " +
                 $"Output: {acceptedOutputPackets}");
 
             GUILayout.Label(
                 $"Frame errors: {current.ParserErrors} / " +
-                $"Payload errors: {rejectedPayloads} / " +
-                $"Stale: {stalePackets}");
+                $"Payload errors: {rejectedPayloads}");
+
+            GUILayout.Label(
+                $"Stale: {stalePackets} / Ignored: {ignoredPackets}");
         }
 
         GUILayout.Label(status);
-
         GUILayout.EndArea();
     }
 
