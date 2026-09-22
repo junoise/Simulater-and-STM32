@@ -113,6 +113,8 @@ static NavigateResult_t ProcessNavigate(const AircraftState_t *aircraftstate){
 
 //3.4
 static MissionCompleteResult_t ProcessMissionComplete(void){
+	target_command_valid = false;
+	missionstate = MISSION_STATE_INITIALIZE;
 	return MISSION_COMPLETE_SUCCESS;
 }
 

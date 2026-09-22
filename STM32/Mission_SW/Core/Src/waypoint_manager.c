@@ -90,8 +90,8 @@ WaypointProgressResult_t UpdateWaypointProgress(
 
 	float horizontal_distance;
 	float altitude_error;
-	const float WAYPOINT_REACHED_DISTANCE_M = 50.0f;
-	const float WAYPOINT_REACHED_ALTITUDE_M = 10.0f; //임시 오차 범위
+	const float WAYPOINT_REACHED_DISTANCE_M = 150.0f;
+	const float WAYPOINT_REACHED_ALTITUDE_M = 30.0f; //임시 오차 범위
 	if (aircraft_state == NULL) {
 		return WAYPOINT_CHECK_FAIL;
 	}
