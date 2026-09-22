@@ -12,12 +12,11 @@ WaypointGenerateResult_t GenerateWaypointList(
 		const AircraftState_t *aircraft_state, const Destination_t *destination) {
 	uint8_t index;
 	float fraction;
+	WaypointList_t new_waypoint_list = { 0 };
 
 	if ((aircraft_state == NULL) || (destination == NULL)) {
 		return WAYPOINT_GENERATE_FAIL;
 	}
-	current_waypoint_index = 0U;
-	current_waypointlist.waypoint_count = 0U;
 
 	for (index = 0U; index < GENERATED_WAYPOINT_COUNT; index++) {
 
@@ -28,20 +27,22 @@ WaypointGenerateResult_t GenerateWaypointList(
 				aircraft_state->current_longitude,
 				destination->destination_latitude,
 				destination->destination_longitude, fraction,
-				&current_waypointlist.waypoint[index].latitude,
-				&current_waypointlist.waypoint[index].longitude) == false) {
+				&new_waypoint_list.waypoint[index].latitude,
+				&new_waypoint_list.waypoint[index].longitude) == false) {
 
-			current_waypointlist.waypoint_count = 0U;
 			return WAYPOINT_GENERATE_FAIL;
 		}
 
-		current_waypointlist.waypoint[index].altitude =
+		new_waypoint_list.waypoint[index].altitude =
 				aircraft_state->current_altitude
 						+ ((destination->destination_altitude
 								- aircraft_state->current_altitude) * fraction);
 	}
 
-	current_waypointlist.waypoint_count = GENERATED_WAYPOINT_COUNT;
+	/* Publish only a complete route; failure preserves the active route. */
+	new_waypoint_list.waypoint_count = GENERATED_WAYPOINT_COUNT;
+	current_waypointlist = new_waypoint_list;
+	current_waypoint_index = 0U;
 
 	return WAYPOINT_GENERATE_SUCCESS;
 }

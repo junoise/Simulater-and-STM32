@@ -20,9 +20,7 @@ MissionProcessResult_t ProcessMission(const MissionInput_t *mission_input,const 
 	if(mission_input==NULL ||SystemStatus==NULL){
 		return MISSION_PROCESS_FAIL;
 	}
-	if(SystemStatus->communication_status==COMM_ERROR){
-		return MISSION_PROCESS_FAIL;
-	}
+	/* Phase 1: system status is observed only; it does not control missions. */
 
 	switch (missionstate){
 
