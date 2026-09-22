@@ -7,7 +7,7 @@ using UnityEngine;
 [RequireComponent(typeof(AircraftAutopilot))]
 public class MissionInterface : MonoBehaviour
 {
-    [Header("Local Test Settings - Not Final Protocol")]
+    [Header("Mission Exchange")]
     public float transmitInterval = 0.1f;
     public float guidanceTimeout = 1f;
 
@@ -23,15 +23,19 @@ public class MissionInterface : MonoBehaviour
 
     public ReadOnlyCollection<MissionWaypoint> Waypoints =>
         Array.AsReadOnly(waypoints);
+
     public event Action<UnityAircraftState> AircraftStateProduced;
     public event Action<UnityMissionRequest> MissionStartProduced;
+
+    // 실제 통신 컴포넌트가 연결 상태 확인 함수를 등록
+    // 모의 임무 모드에서는 null을 유지
+    public Func<bool> ExternalPeerReady { get; set; }
 
     private AircraftAutopilot autopilot;
     private Rigidbody rb;
     private FuelSystem fuel;
 
-    private MissionWaypoint[] waypoints =
-        Array.Empty<MissionWaypoint>();
+    private MissionWaypoint[] waypoints = Array.Empty<MissionWaypoint>();
 
     private bool routeHealthy;
     private bool hasGuidance;
@@ -64,8 +68,7 @@ public class MissionInterface : MonoBehaviour
 
         var geo = autopilot.georeference;
 
-        Vector3 position =
-            geo.transform.InverseTransformPoint(rb.position);
+        Vector3 position = geo.transform.InverseTransformPoint(rb.position);
 
         double3 ecef =
             geo.TransformUnityPositionToEarthCenteredEarthFixed(
@@ -82,8 +85,7 @@ public class MissionInterface : MonoBehaviour
             current_altitude = (float)llh.z,
             current_heading = autopilot.Heading,
             current_speed = autopilot.GroundSpeed,
-            current_fuel =
-                fuel.currentFuelMass / fuel.maxFuelMass * 100f
+            current_fuel = fuel.currentFuelMass / fuel.maxFuelMass * 100f
         };
 
         return MissionInterfaceRules.StateValid(state);
@@ -107,9 +109,7 @@ public class MissionInterface : MonoBehaviour
         }
 
         if (!autopilot.IsEngaged)
-        {
             return;
-        }
 
         if (!TryGetGuidance(out MissionCommand command, out string reason))
         {
@@ -118,27 +118,53 @@ public class MissionInterface : MonoBehaviour
             return;
         }
 
-        bool applied = autopilot.TrySetTargets(
-            command.target_heading,
-            command.target_altitude,
-            command.target_speed,
-            out string result
-        );
-
-        if (!applied)
+        if (!autopilot.TrySetTargets(
+                command.target_heading,
+                command.target_altitude,
+                command.target_speed,
+                out string result))
         {
             autopilot.Disengage();
             LastError = "AP target rejected: " + result;
         }
     }
 
+    public void ClearMission(string reason = "")
+    {
+        if (autopilot != null)
+            autopilot.Disengage();
+
+        MissionRequested = false;
+        HasReceivedCommand = false;
+
+        routeHealthy = false;
+        hasGuidance = false;
+        completeLatched = false;
+
+        waypoints = Array.Empty<MissionWaypoint>();
+
+        LastMissionRequest = default;
+        LastReceived = default;
+        acceptedGuidance = default;
+
+        lastPacketTime = float.NegativeInfinity;
+        lastGoodGuidanceTime = float.NegativeInfinity;
+
+        LastError = reason;
+    }
+
     public bool StartMission(
         float latitude,
         float longitude,
         float altitude,
-        out string message
-    )
+        out string message)
     {
+        if (!isActiveAndEnabled)
+        {
+            message = "Mission interface is disabled.";
+            return false;
+        }
+
         if (!HasAircraftState)
         {
             message = "Aircraft state is not ready.";
@@ -152,24 +178,21 @@ public class MissionInterface : MonoBehaviour
             return false;
         }
 
-        if (MissionStartProduced == null)
+        if (ExternalPeerReady != null && !ExternalPeerReady())
         {
-            message = "No mission peer. Enable MockMissionComputer.";
+            message = "Board is not connected.";
             return false;
         }
 
-        autopilot.Disengage();
+        if (MissionStartProduced == null)
+        {
+            message = "Connect the board or enable MockMissionComputer.";
+            return false;
+        }
+
+        ClearMission();
 
         MissionRequested = true;
-        HasReceivedCommand = false;
-        routeHealthy = false;
-        hasGuidance = false;
-        completeLatched = false;
-
-        waypoints = Array.Empty<MissionWaypoint>();
-        lastPacketTime = float.NegativeInfinity;
-        lastGoodGuidanceTime = float.NegativeInfinity;
-        LastError = "";
 
         LastMissionRequest = new UnityMissionRequest
         {
@@ -181,16 +204,23 @@ public class MissionInterface : MonoBehaviour
 
         MissionStartProduced.Invoke(LastMissionRequest);
 
-        message = "Mission request sent. Wait for NAVIGATE, then AP ON.";
+        if (!MissionRequested)
+        {
+            message = string.IsNullOrEmpty(LastError)
+                ? "Mission request cancelled."
+                : LastError;
+
+            return false;
+        }
+
+        message = "Mission request queued. Wait for NAVIGATE, then AP ON.";
         return true;
     }
 
     public void ReceiveWaypointList(MissionWaypoint[] waypoint_list)
     {
         if (!MissionRequested || completeLatched)
-        {
             return;
-        }
 
         bool valid =
             waypoint_list != null &&
@@ -213,12 +243,7 @@ public class MissionInterface : MonoBehaviour
         {
             routeHealthy = false;
             LastError = "Waypoint list rejected.";
-
-            if (autopilot.IsEngaged)
-            {
-                autopilot.Disengage();
-            }
-
+            autopilot.Disengage();
             return;
         }
 
@@ -236,9 +261,7 @@ public class MissionInterface : MonoBehaviour
     public void ReceiveCommand(MissionCommand command)
     {
         if (!MissionRequested)
-        {
             return;
-        }
 
         if (!MissionInterfaceRules.CommandValid(command))
         {
@@ -263,24 +286,17 @@ public class MissionInterface : MonoBehaviour
 
     private void ProcessGuidance(
         MissionCommand command,
-        float receivedTime
-    )
+        float receivedTime)
     {
         if (command.mission_state == (byte)MissionStateCode.INITIALIZE)
         {
             hasGuidance = false;
-
-            if (autopilot.IsEngaged)
-            {
-                autopilot.Disengage();
-            }
-
+            autopilot.Disengage();
             return;
         }
+
         if (command.data_status != (byte)DataStatusCode.VALID)
-        {
             return;
-        }
 
         if (!routeHealthy ||
             command.current_waypoint_index >= waypoints.Length)
@@ -308,10 +324,21 @@ public class MissionInterface : MonoBehaviour
 
     public bool TryGetGuidance(
         out MissionCommand command,
-        out string reason
-    )
+        out string reason)
     {
         command = acceptedGuidance;
+
+        if (!isActiveAndEnabled)
+        {
+            reason = "Mission interface is disabled.";
+            return false;
+        }
+
+        if (ExternalPeerReady != null && !ExternalPeerReady())
+        {
+            reason = "Board disconnected.";
+            return false;
+        }
 
         if (!MissionRequested)
         {
@@ -351,10 +378,9 @@ public class MissionInterface : MonoBehaviour
             return false;
         }
 
-        reason =
-            LastReceived.data_status == (byte)DataStatusCode.VALID
-                ? "Guidance ready."
-                : "Holding last valid guidance briefly.";
+        reason = LastReceived.data_status == (byte)DataStatusCode.VALID
+            ? "Guidance ready."
+            : "Holding last valid guidance briefly.";
 
         return true;
     }
@@ -362,9 +388,7 @@ public class MissionInterface : MonoBehaviour
     public bool EngageAP(out string message)
     {
         if (!TryGetGuidance(out MissionCommand command, out message))
-        {
             return false;
-        }
 
         if (!autopilot.EngageCurrent())
         {
@@ -373,10 +397,10 @@ public class MissionInterface : MonoBehaviour
         }
 
         if (!autopilot.TrySetTargets(
-            command.target_heading,
-            command.target_altitude,
-            command.target_speed,
-            out message))
+                command.target_heading,
+                command.target_altitude,
+                command.target_speed,
+                out message))
         {
             autopilot.Disengage();
             return false;
@@ -393,9 +417,6 @@ public class MissionInterface : MonoBehaviour
 
     private void OnDisable()
     {
-        if (autopilot != null && autopilot.IsEngaged)
-        {
-            autopilot.Disengage();
-        }
+        ClearMission();
     }
 }

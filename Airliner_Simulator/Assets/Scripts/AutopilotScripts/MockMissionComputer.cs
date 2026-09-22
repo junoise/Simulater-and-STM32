@@ -10,7 +10,7 @@ public class MockMissionComputer : MonoBehaviour
     public float arrivalRadius = 150f;
     public float arrivalAltitudeTolerance = 30f;
 
-    [Header("Three Waypoint Demo")]
+    [Header("Five Waypoint Demo")]
     public float middleLateralOffset = 350f;
     public float middleAltitudeOffset = 50f;
     public float middleSpeedOffset = 5f;
@@ -44,35 +44,16 @@ public class MockMissionComputer : MonoBehaviour
     [SerializeField]
     private string localGuidanceStatus = "WAITING FOR MISSION";
 
-    [SerializeField]
-    private int currentWaypointNumber;
-
-    [SerializeField]
-    private int passedWaypointCount;
-
-    [SerializeField]
-    private float distanceToDestination;
-
-    [SerializeField]
-    private float crossTrackError;
-
-    [SerializeField]
-    private float remainingAlongTrack;
-
-    [SerializeField]
-    private float groundTrack;
-
-    [SerializeField]
-    private float headingDrift;
-
-    [SerializeField]
-    private float plannedTurnRadius;
-
-    [SerializeField]
-    private float guidanceBank;
-
-    [SerializeField]
-    private float routeProgress;
+    [SerializeField] private int currentWaypointNumber;
+    [SerializeField] private int passedWaypointCount;
+    [SerializeField] private float distanceToDestination;
+    [SerializeField] private float crossTrackError;
+    [SerializeField] private float remainingAlongTrack;
+    [SerializeField] private float groundTrack;
+    [SerializeField] private float headingDrift;
+    [SerializeField] private float plannedTurnRadius;
+    [SerializeField] private float guidanceBank;
+    [SerializeField] private float routeProgress;
 
     public string LocalGuidanceStatus => localGuidanceStatus;
     public bool WaypointMissed => missed;
@@ -109,7 +90,6 @@ public class MockMissionComputer : MonoBehaviour
 
     private float[] routeSpeeds = Array.Empty<float>();
     private float[] waypointStations = Array.Empty<float>();
-
     private List<PathPoint> path = new List<PathPoint>();
 
     private double originLatitude;
@@ -159,7 +139,6 @@ public class MockMissionComputer : MonoBehaviour
     private void OnEnable()
     {
         FindReferences();
-
         interfaceLink.MissionStartProduced += OnMissionStart;
         interfaceLink.AircraftStateProduced += OnAircraftState;
     }
@@ -212,17 +191,11 @@ public class MockMissionComputer : MonoBehaviour
         double longitude)
     {
         double distance = MissionInterfaceRules.DistanceMeters(
-            startLatitude,
-            startLongitude,
-            latitude,
-            longitude
+            startLatitude, startLongitude, latitude, longitude
         );
 
         float heading = MissionInterfaceRules.BearingDegrees(
-            startLatitude,
-            startLongitude,
-            latitude,
-            longitude
+            startLatitude, startLongitude, latitude, longitude
         ) * Mathf.Deg2Rad;
 
         return new Vector2(
@@ -320,8 +293,8 @@ public class MockMissionComputer : MonoBehaviour
             entry + RightOf(entryTangent) * direction * radius;
 
         Vector2 initialRadius = entry - center;
-
         float length = Mathf.Abs(turnAngle) * radius;
+
         int count = Mathf.Max(2, Mathf.CeilToInt(length / spacing));
 
         for (int i = 1; i <= count; i++)
@@ -406,7 +379,6 @@ public class MockMissionComputer : MonoBehaviour
 
             Vector2 closest = Vector2.Lerp(a.position, b.position, t);
             Vector2 difference = position - closest;
-
             float squaredDistance = difference.sqrMagnitude;
 
             if (squaredDistance >= bestSquaredDistance)
@@ -608,29 +580,59 @@ public class MockMissionComputer : MonoBehaviour
             middleAltitude
         );
 
+        MissionWaypoint last = new MissionWaypoint
+        {
+            waypoint_latitude = latitude,
+            waypoint_longitude = longitude,
+            waypoint_altitude = altitude
+        };
+
+        MissionWaypoint early = PointAt(
+            state.current_latitude,
+            state.current_longitude,
+            mainHeading,
+            (float)(totalDistance / 6.0),
+            state.current_altitude
+        );
+
+        MissionWaypoint late = PointAt(
+            middle.waypoint_latitude,
+            middle.waypoint_longitude,
+            MissionInterfaceRules.BearingDegrees(
+                middle.waypoint_latitude,
+                middle.waypoint_longitude,
+                last.waypoint_latitude,
+                last.waypoint_longitude
+            ),
+            (float)(MissionInterfaceRules.DistanceMeters(
+                middle.waypoint_latitude,
+                middle.waypoint_longitude,
+                last.waypoint_latitude,
+                last.waypoint_longitude
+            ) * 2.0 / 3.0),
+            altitude
+        );
+
         newRoute = new MissionWaypoint[]
         {
-            first,
-            middle,
-            new MissionWaypoint
-            {
-                waypoint_latitude = latitude,
-                waypoint_longitude = longitude,
-                waypoint_altitude = altitude
-            }
+            early, first, middle, late, last
         };
 
         newSpeeds = new float[]
         {
             cruiseSpeed,
+            cruiseSpeed,
             middleSpeed,
+            cruiseSpeed,
             cruiseSpeed
         };
 
-        Vector2[] vertices = new Vector2[4];
+        Vector2[] vertices = new Vector2[newRoute.Length + 1];
+        int lastVertex = vertices.Length - 1;
+
         vertices[0] = Vector2.zero;
 
-        for (int i = 0; i < 3; i++)
+        for (int i = 0; i < newRoute.Length; i++)
         {
             vertices[i + 1] = ToPlane(
                 state.current_latitude,
@@ -654,12 +656,12 @@ public class MockMissionComputer : MonoBehaviour
             (gravity * turnResponseFactor *
              Mathf.Tan(planningBank * Mathf.Deg2Rad));
 
-        Vector2[] entries = new Vector2[4];
-        Vector2[] exits = new Vector2[4];
-        float[] angles = new float[4];
-        float[] tangentDistances = new float[4];
+        Vector2[] entries = new Vector2[vertices.Length];
+        Vector2[] exits = new Vector2[vertices.Length];
+        float[] angles = new float[vertices.Length];
+        float[] tangentDistances = new float[vertices.Length];
 
-        for (int i = 1; i <= 2; i++)
+        for (int i = 1; i < lastVertex; i++)
         {
             Vector2 incoming =
                 (vertices[i] - vertices[i - 1]).normalized;
@@ -687,15 +689,20 @@ public class MockMissionComputer : MonoBehaviour
             exits[i] = vertices[i] + outgoing * tangentDistance;
         }
 
-        for (int leg = 0; leg < 3; leg++)
+        for (int leg = 0; leg < lastVertex; leg++)
         {
             float length = Vector2.Distance(
                 vertices[leg],
                 vertices[leg + 1]
             );
 
-            float startCut = leg == 0 ? 0f : tangentDistances[leg];
-            float endCut = leg == 2 ? 0f : tangentDistances[leg + 1];
+            float startCut =
+                leg == 0 ? 0f : tangentDistances[leg];
+
+            float endCut =
+                leg == lastVertex - 1
+                    ? 0f
+                    : tangentDistances[leg + 1];
 
             if (startCut + endCut + 200f >= length)
             {
@@ -708,7 +715,7 @@ public class MockMissionComputer : MonoBehaviour
 
         Vector2 cursor = vertices[0];
 
-        for (int i = 1; i <= 2; i++)
+        for (int i = 1; i < lastVertex; i++)
         {
             Vector2 incoming =
                 (vertices[i] - vertices[i - 1]).normalized;
@@ -734,15 +741,20 @@ public class MockMissionComputer : MonoBehaviour
             cursor = exits[i];
         }
 
-        AddLine(newPath, cursor, vertices[3], pathSampleSpacing);
+        AddLine(
+            newPath,
+            cursor,
+            vertices[lastVertex],
+            pathSampleSpacing
+        );
 
         Vector2 finalDirection =
-            (vertices[3] - vertices[2]).normalized;
+            (vertices[lastVertex] - vertices[lastVertex - 1]).normalized;
 
         AddLine(
             newPath,
-            vertices[3],
-            vertices[3] + finalDirection * 3000f,
+            vertices[lastVertex],
+            vertices[lastVertex] + finalDirection * 3000f,
             pathSampleSpacing
         );
 
@@ -752,9 +764,9 @@ public class MockMissionComputer : MonoBehaviour
             return false;
         }
 
-        newStations = new float[3];
+        newStations = new float[newRoute.Length];
 
-        for (int i = 0; i < 3; i++)
+        for (int i = 0; i < newRoute.Length; i++)
         {
             ProjectOntoPath(
                 newPath,
@@ -873,8 +885,9 @@ public class MockMissionComputer : MonoBehaviour
             Mathf.Cos(midpointHeading)
         );
 
-        float blend =
-            1f - Mathf.Exp(-sampleTime / Mathf.Max(0.1f, trackFilterTime));
+        float blend = 1f - Mathf.Exp(
+            -sampleTime / Mathf.Max(0.1f, trackFilterTime)
+        );
 
         if (!trackFilterSeeded)
         {
@@ -1009,7 +1022,8 @@ public class MockMissionComputer : MonoBehaviour
         localGuidanceStatus = "SMOOTH ROUTE READY";
 
         Debug.Log(
-            $"Smooth route ready: radius={plannedTurnRadius:F0} m, " +
+            $"Smooth route ready: waypoints={route.Length}, " +
+            $"radius={plannedTurnRadius:F0} m, " +
             $"middle offset={middleLateralOffset:F0} m, " +
             $"arrival radius={arrivalRadius:F0} m.",
             this
@@ -1093,8 +1107,7 @@ public class MockMissionComputer : MonoBehaviour
             Mathf.DeltaAngle(track, Bearing(current.tangent)) *
             Mathf.Deg2Rad;
 
-        float frequency =
-            1f / Mathf.Max(8f, pathResponseTime);
+        float frequency = 1f / Mathf.Max(8f, pathResponseTime);
 
         float desiredTurnRate =
             speed * curvature +
@@ -1174,7 +1187,9 @@ public class MockMissionComputer : MonoBehaviour
 
         if (completed)
         {
-            localGuidanceStatus = "COMPLETE 3/3";
+            localGuidanceStatus =
+                $"COMPLETE {route.Length}/{route.Length}";
+
             interfaceLink.ReceiveCommand(output);
             return;
         }
@@ -1202,7 +1217,9 @@ public class MockMissionComputer : MonoBehaviour
                 output.mission_state =
                     (byte)MissionStateCode.MISSION_COMPLETE;
 
-                localGuidanceStatus = "COMPLETE 3/3";
+                localGuidanceStatus =
+                    $"COMPLETE {route.Length}/{route.Length}";
+
                 interfaceLink.ReceiveCommand(output);
                 return;
             }
@@ -1235,7 +1252,7 @@ public class MockMissionComputer : MonoBehaviour
             );
 
             Debug.LogWarning(
-                $"MISSED WAYPOINT {waypointIndex + 1}/3: " +
+                $"MISSED WAYPOINT {waypointIndex + 1}/{route.Length}: " +
                 $"distance={distanceToDestination:F1} m, " +
                 $"path XTE={crossTrackError:F1} m, " +
                 $"along={remainingAlongTrack:F1} m, " +
@@ -1253,8 +1270,9 @@ public class MockMissionComputer : MonoBehaviour
         output.mission_state = (byte)MissionStateCode.NAVIGATE;
 
         localGuidanceStatus = missed
-            ? $"MISSED WP {waypointIndex + 1}/3 - NEW MISSION"
-            : $"CURVE WP {waypointIndex + 1}/3 / BANK {guidanceBank:+0.0;-0.0;0.0}";
+            ? $"MISSED WP {waypointIndex + 1}/{route.Length} - NEW MISSION"
+            : $"CURVE WP {waypointIndex + 1}/{route.Length} / " +
+              $"BANK {guidanceBank:+0.0;-0.0;0.0}";
 
         navSentForLeg = true;
         interfaceLink.ReceiveCommand(output);

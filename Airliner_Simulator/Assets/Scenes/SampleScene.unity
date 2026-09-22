@@ -10916,7 +10916,7 @@ MonoBehaviour:
   destinationLongitudeInput: {fileID: 171138190}
   destinationAltitudeInput: {fileID: 821833102}
   statusText: {fileID: 749090331}
-  aheadDistance: 9000
+  aheadDistance: 15000
 --- !u!1001 &1667103662
 PrefabInstance:
   m_ObjectHideFlags: 0
@@ -12079,6 +12079,7 @@ GameObject:
   - component: {fileID: 2007303307}
   - component: {fileID: 2007303306}
   - component: {fileID: 2007303308}
+  - component: {fileID: 2007303309}
   m_Layer: 0
   m_Name: Airliner
   m_TagString: Untagged
@@ -12166,6 +12167,22 @@ MonoBehaviour:
   brakeReleaseRate: 3
   centerOfMass: {x: 0, y: 1, z: -1}
   controlInputRate: 3
+  manualCommandRate: 1.5
+  manualSurfaceInputRate: 1
+  manualPitchRate: 2
+  manualRollRate: 5
+  manualRateResponse: 2
+  manualMaximumControlInput: 0.3
+  manualRudderInput: 0.025
+  manualRudderReferenceSpeed: 100
+  manualMaximumYawRate: 2
+  manualGroundPitchScale: 1
+  manualGroundRollScale: 0.05
+  manualEnvelopeAssist: 1
+  manualBankLimit: 35
+  manualPitchUpLimit: 20
+  manualPitchDownLimit: 10
+  manualEnvelopeSoftZone: 8
 --- !u!114 &2007303299
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -12426,6 +12443,27 @@ MonoBehaviour:
   historySeconds: 12
   logWaypointChanges: 1
   logMissedWaypoint: 1
+--- !u!114 &2007303309
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2007303295}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 03bbf447b32f17742855a04787fc5df5, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::Stm32SerialLink
+  portName: COM3
+  connectOnStart: 0
+  dtrEnable: 0
+  showPanel: 1
+  status: DISCONNECTED
+  acceptedWaypointPackets: 0
+  acceptedOutputPackets: 0
+  rejectedPayloads: 0
+  stalePackets: 0
 --- !u!1 &2016866697
 GameObject:
   m_ObjectHideFlags: 0
