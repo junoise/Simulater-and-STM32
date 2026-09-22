@@ -53,6 +53,10 @@ MissionProcessResult_t ProcessMission(const MissionInput_t *mission_input,const 
 		    break;
 	case MISSION_STATE_COMPLETE:
 		ProcessMissionComplete();
+		/* Keep COMPLETE until a fresh valid start request creates a route. */
+		if (ProcessInitialize(mission_input) == INITIALIZE_FAIL) {
+			return MISSION_PROCESS_FAIL;
+		}
 		break;
 	default:
 		return MISSION_PROCESS_FAIL;
@@ -67,7 +71,7 @@ static InitializeResult_t ProcessInitialize(const MissionInput_t *mission_input)
 	if(mission_input->destination_valid==false){
 		return INITIALIZE_WAIT;
 	}
-	if(mission_input->mission_start_command==0){
+	if(mission_input->mission_start_command!=1U){
 		return INITIALIZE_WAIT;
 	}
 	if(mission_input->mission_command_valid==false){
@@ -114,7 +118,6 @@ static NavigateResult_t ProcessNavigate(const AircraftState_t *aircraftstate){
 //3.4
 static MissionCompleteResult_t ProcessMissionComplete(void){
 	target_command_valid = false;
-	missionstate = MISSION_STATE_INITIALIZE;
 	return MISSION_COMPLETE_SUCCESS;
 }
 
